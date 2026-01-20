@@ -48,6 +48,6 @@ uint8_t Adc_GetBatteryLevel(void) {
   if (vol > 4.12) {
     return 100;
   }
-  float level = (vol / 4.12) * 100;
+  float level = ((vol - 3.0) / 1.12) * 100;
   return (uint8_t)level;
 }

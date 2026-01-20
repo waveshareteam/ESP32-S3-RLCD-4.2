@@ -81,10 +81,10 @@ void DisplayPort::RLCD_Init() {
 	RLCD_SendData(0x04);   
 
 	RLCD_SendCommand(0xC1); //VSHP Setting
-	RLCD_SendData(0x69);
-	RLCD_SendData(0x69);
-	RLCD_SendData(0x69);
-	RLCD_SendData(0x69);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
 
 	RLCD_SendCommand(0xC2);
 	RLCD_SendData(0x19);
@@ -93,10 +93,10 @@ void DisplayPort::RLCD_Init() {
 	RLCD_SendData(0x19);
 
 	RLCD_SendCommand(0xC4);
-	RLCD_SendData(0x4B);
-	RLCD_SendData(0x4B);
-	RLCD_SendData(0x4B);
-	RLCD_SendData(0x4B);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
 
 	RLCD_SendCommand(0xC5);
 	RLCD_SendData(0x19);
@@ -105,11 +105,11 @@ void DisplayPort::RLCD_Init() {
 	RLCD_SendData(0x19);
 
 	RLCD_SendCommand(0xD8);
-	RLCD_SendData(0x80);
+	RLCD_SendData(0xA6);
 	RLCD_SendData(0xE9);
 
 	RLCD_SendCommand(0xB2);
-	RLCD_SendData(0x02);
+	RLCD_SendData(0x05);
 
 	RLCD_SendCommand(0xB3);
 	RLCD_SendData(0xE5);
@@ -366,4 +366,118 @@ void DisplayPort::RLCD_SetPixel(uint16_t x, uint16_t y, uint8_t color) {
         *p &= ~mask;
 }
 
+#endif
+
+
+#if 0 
+    RLCD_SendCommand(0xD6);  // NVM Load Control
+	RLCD_SendData(0x17);
+	RLCD_SendData(0x02);
+
+	RLCD_SendCommand(0xD1); //Booster Enable
+	RLCD_SendData(0x01);
+
+	RLCD_SendCommand(0xC0); //Gate Voltage Control
+	RLCD_SendData(0x11);   
+	RLCD_SendData(0x04);   
+
+	RLCD_SendCommand(0xC1); //VSHP Setting
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+
+	RLCD_SendCommand(0xC2);
+	RLCD_SendData(0x19);
+	RLCD_SendData(0x19);
+	RLCD_SendData(0x19);
+	RLCD_SendData(0x19);
+
+	RLCD_SendCommand(0xC4);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+	RLCD_SendData(0x41);
+
+	RLCD_SendCommand(0xC5);
+	RLCD_SendData(0x19);
+	RLCD_SendData(0x19);
+	RLCD_SendData(0x19);
+	RLCD_SendData(0x19);
+
+	RLCD_SendCommand(0xD8);
+	RLCD_SendData(0xA6);
+	RLCD_SendData(0xE9);
+
+	RLCD_SendCommand(0xB2);
+	RLCD_SendData(0x05);
+
+	RLCD_SendCommand(0xB3);
+	RLCD_SendData(0xE5);
+	RLCD_SendData(0xF6);
+	RLCD_SendData(0x05);
+	RLCD_SendData(0x46);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x76);
+	RLCD_SendData(0x45);
+
+	RLCD_SendCommand(0xB4);
+	RLCD_SendData(0x05);
+	RLCD_SendData(0x46);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x77);
+	RLCD_SendData(0x76);
+	RLCD_SendData(0x45);
+
+	RLCD_SendCommand(0x62);
+	RLCD_SendData(0x32);
+	RLCD_SendData(0x03);
+	RLCD_SendData(0x1F);
+
+	RLCD_SendCommand(0xB7);
+	RLCD_SendData(0x13);
+
+	RLCD_SendCommand(0xB0);
+	RLCD_SendData(0x64);
+
+	RLCD_SendCommand(0x11); 
+	vTaskDelay(pdMS_TO_TICKS(200));     
+	RLCD_SendCommand(0xC9);
+	RLCD_SendData(0x00);
+
+	RLCD_SendCommand(0x36);
+	RLCD_SendData(0x48); 
+
+	RLCD_SendCommand(0x3A);
+	RLCD_SendData(0x11); 
+
+	RLCD_SendCommand(0xB9);
+	RLCD_SendData(0x20);
+
+	RLCD_SendCommand(0xB8);
+	RLCD_SendData(0x29);
+
+	RLCD_SendCommand(0x21);
+
+	RLCD_SendCommand(0x2A); 
+	RLCD_SendData(0x12);
+	RLCD_SendData(0x2A);
+
+	RLCD_SendCommand(0x2B); 
+	RLCD_SendData(0x00);
+	RLCD_SendData(0xC7);
+
+	RLCD_SendCommand(0x35);
+	RLCD_SendData(0x00);
+
+	RLCD_SendCommand(0xD0);
+	RLCD_SendData(0xFF);
+
+	RLCD_SendCommand(0x38);
+	RLCD_SendCommand(0x29);
 #endif
