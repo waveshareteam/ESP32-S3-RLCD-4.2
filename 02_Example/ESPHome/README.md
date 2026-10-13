@@ -1,5 +1,7 @@
 # ESPHome
 
+[中文](README_ZH.md)
+
 [ESPHome](https://esphome.io/) lets you configure ESP32 devices for [Home Assistant](https://www.home-assistant.io/) using simple YAML — no C/C++ required.
 
 ## Examples

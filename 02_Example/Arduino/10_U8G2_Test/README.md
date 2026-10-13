@@ -1,5 +1,7 @@
 # ST7305 U8g2 Counter
 
+[中文](README_ZH.md)
+
 Arduino sketch for an ESP32-S3 board with an ST7305 300x400 RLCD panel.
 
 ## Requirements
@@ -23,4 +25,4 @@ Arduino sketch for an ESP32-S3 board with an ST7305 300x400 RLCD panel.
 - FPS, frame time, and flush time at the bottom
 - Serial log at 115200 baud
 
-Open `ST7305_U8g2_Counter.ino` in Arduino IDE and upload to the ESP32-S3 board.
+Open `10_U8G2_Test.ino` in Arduino IDE and upload to the ESP32-S3 board.

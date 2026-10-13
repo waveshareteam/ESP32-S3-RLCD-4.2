@@ -1,15 +1,29 @@
-# Waveshare ESP32-S3-RLCD-4.2
+<div align="center">
+  <h1>ESP32-S3-RLCD-4.2</h1>
+  <p><strong>ESP32-S3 4.2-inch fully reflective LCD AIoT development board</strong></p>
+  <p>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/waveshareteam/ESP32-S3-RLCD-4.2"></a>
+  </p>
+  <p>
+    <a href="README_ZH.md">中文</a> ·
+    <a href="https://www.waveshare.com/esp32-s3-rlcd-4.2.htm">🌐 Product Page</a> ·
+    <a href="https://docs.waveshare.com/ESP32-S3-RLCD-4.2">📚 Documentation</a> ·
+    <a href="03_Firmware/">📦 Factory Firmware</a> ·
+    <a href="02_Example/ESP-IDF/">🧩 ESP-IDF Examples</a> ·
+    <a href="02_Example/Arduino/">🔧 Arduino Examples</a>
+  </p>
+  <p>
+    <img src="assets/Product-1.webp" alt="Waveshare ESP32-S3-RLCD-4.2" width="500">
+  </p>
+</div>
 
-[中文](README_ZH.md)
+---
+
+## ✨ Overview
 
 The ESP32-S3-RLCD-4.2 is a fully reflective screen AIoT development board based on the ESP32-S3-WROOM-1-N16R8 (dual-core Xtensa LX7 @ 240 MHz, 8 MB PSRAM, 16 MB Flash) with 2.4 GHz Wi-Fi and Bluetooth 5 LE. It features a 4.2-inch 300 × 400 reflective LCD (no backlight required), an audio module (ES8311 + ES7210 with dual-mic array), along with a PCF85063 RTC, SHTC3 temperature/humidity sensor, TF card slot, USB Type-C, and an 18650 battery holder, making it ideal for smart ornaments, electronic calendars, and AI agent applications.
 
-- [Purchase Link](https://www.waveshare.com/esp32-s3-rlcd-4.2.htm)
-- [Documentation](https://docs.waveshare.com/ESP32-S3-RLCD-4.2)
-
-<img src="assets/Product-1.webp" alt="Waveshare ESP32-S3-RLCD-4.2" width="500">
-
-## Repository Structure
+## 🗂️ Repository Structure
 
 This repository provides sample programs, Arduino libraries, and factory firmware for the ESP32-S3-RLCD-4.2.
 
@@ -21,7 +35,7 @@ This repository provides sample programs, Arduino libraries, and factory firmwar
 └── Tools-Configuration.png # Arduino IDE board settings reference
 ```
 
-## Getting Started
+## 🚀 Getting Started
 
 Pre-built firmware is available in [`03_Firmware/`](03_Firmware). For build environments, flashing steps, pin mappings, and configuration, refer to the [documentation page](https://docs.waveshare.com/ESP32-S3-RLCD-4.2).
 
@@ -32,7 +46,7 @@ Pre-built firmware is available in [`03_Firmware/`](03_Firmware). For build envi
 
 </details>
 
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions! Here's how you can help:
 
@@ -41,11 +55,11 @@ We welcome contributions! Here's how you can help:
 3. Commit your changes with clear descriptions.
 4. Submit a pull request for review.
 
-## Issues and Support
+## 🤝 Issues and Support
 
 Open an [issue](https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/issues) with detailed information, or contact the Waveshare team with your order number for technical support.
 
-## License
+## 📄 License
 
 Licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
 

@@ -1,5 +1,7 @@
 # ESPHome Example Configurations
 
+[中文](README_ZH.md)
+
 Ready-to-use ESPHome YAML for the ESP32-S3-RLCD-4.2. Define `wifi_ssid` / `wifi_password` in your `secrets.yaml` before flashing.
 
 | File | Description | Hardware |
