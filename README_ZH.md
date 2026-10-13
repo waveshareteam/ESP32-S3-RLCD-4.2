@@ -8,9 +8,9 @@
     <a href="README.md">English</a> ·
     <a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2.htm">🌐 产品页面</a> ·
     <a href="https://docs.waveshare.net/ESP32-S3-RLCD-4.2">📚 文档</a> ·
-    <a href="03_Firmware/">📦 出厂固件</a> ·
-    <a href="02_Example/ESP-IDF/">🧩 ESP-IDF 示例</a> ·
-    <a href="02_Example/Arduino/">🔧 Arduino 示例</a>
+    <a href="firmware/">📦 出厂固件</a> ·
+    <a href="examples/esp-idf/">🧩 ESP-IDF 示例</a> ·
+    <a href="examples/arduino/examples/">🔧 Arduino 示例</a>
   </p>
   <p>
     <img src="assets/Product-1.webp" alt="Waveshare ESP32-S3-RLCD-4.2" width="500">
@@ -29,15 +29,31 @@ ESP32-S3-RLCD-4.2 是一款基于 ESP32-S3-WROOM-1-N16R8（双核 Xtensa LX7 @ 2
 
 ```
 .
-├── 01_Arduino_Libraries/   # 第三方库（SensorLib、U8g2、LVGL）
-├── 02_Example/             # Arduino、ESP-IDF、ESPHome 与小智示例程序
-├── 03_Firmware/            # 预编译固件（.bin）
+├── examples/
+│   ├── arduino/
+│   │   ├── examples/       # Arduino 示例程序
+│   │   └── libraries/      # 第三方库（SensorLib、U8g2、LVGL）
+│   ├── esp-idf/            # ESP-IDF 示例程序
+│   ├── esphome/            # ESPHome YAML 配置
+│   └── xiaozhi/            # 小智 AI 应用源码
+├── firmware/               # 预编译固件（.bin）
 └── Tools-Configuration.png # Arduino IDE 开发板配置参考
 ```
 
+仓库目录结构已调整。如果你是从旧链接或旧教程过来的，可按下表找到新位置。
+
+| 原路径 | 现路径 |
+| --- | --- |
+| `01_Arduino_Libraries/` | [`examples/arduino/libraries/`](examples/arduino/libraries/) |
+| `02_Example/Arduino/` | [`examples/arduino/examples/`](examples/arduino/examples/) |
+| `02_Example/ESP-IDF/` | [`examples/esp-idf/`](examples/esp-idf/) |
+| `02_Example/ESPHome/` | [`examples/esphome/`](examples/esphome/README_ZH.md) |
+| `02_Example/XiaoZhi/` | [`examples/xiaozhi/`](examples/xiaozhi/) |
+| `03_Firmware/` | [`firmware/`](firmware/) |
+
 ## 🚀 快速开始
 
-预编译固件位于 [`03_Firmware/`](03_Firmware)。构建环境、烧录步骤、引脚映射及配置说明请参阅[产品文档页面](https://docs.waveshare.net/ESP32-S3-RLCD-4.2)。
+预编译固件位于 [`firmware/`](firmware/)。构建环境、烧录步骤、引脚映射及配置说明请参阅[产品文档页面](https://docs.waveshare.net/ESP32-S3-RLCD-4.2)。
 
 <details>
 <summary>Arduino IDE 开发板配置</summary>

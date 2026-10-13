@@ -8,9 +8,9 @@
     <a href="README_ZH.md">中文</a> ·
     <a href="https://www.waveshare.com/esp32-s3-rlcd-4.2.htm">🌐 Product Page</a> ·
     <a href="https://docs.waveshare.com/ESP32-S3-RLCD-4.2">📚 Documentation</a> ·
-    <a href="03_Firmware/">📦 Factory Firmware</a> ·
-    <a href="02_Example/ESP-IDF/">🧩 ESP-IDF Examples</a> ·
-    <a href="02_Example/Arduino/">🔧 Arduino Examples</a>
+    <a href="firmware/">📦 Factory Firmware</a> ·
+    <a href="examples/esp-idf/">🧩 ESP-IDF Examples</a> ·
+    <a href="examples/arduino/examples/">🔧 Arduino Examples</a>
   </p>
   <p>
     <img src="assets/Product-1.webp" alt="Waveshare ESP32-S3-RLCD-4.2" width="500">
@@ -29,15 +29,31 @@ This repository provides sample programs, Arduino libraries, and factory firmwar
 
 ```
 .
-├── 01_Arduino_Libraries/   # Third-party libraries (SensorLib, U8g2, LVGL)
-├── 02_Example/             # Sample programs for Arduino, ESP-IDF, ESPHome, and XiaoZhi
-├── 03_Firmware/            # Pre-built firmware (.bin)
+├── examples/
+│   ├── arduino/
+│   │   ├── examples/       # Arduino sketches
+│   │   └── libraries/      # Third-party libraries (SensorLib, U8g2, LVGL)
+│   ├── esp-idf/            # ESP-IDF examples
+│   ├── esphome/            # ESPHome YAML configurations
+│   └── xiaozhi/            # XiaoZhi AI application source
+├── firmware/               # Pre-built firmware (.bin)
 └── Tools-Configuration.png # Arduino IDE board settings reference
 ```
 
+The directory layout was reorganized. If you are following an older link or tutorial, use the table below to find the new location.
+
+| Previous path | Current path |
+| --- | --- |
+| `01_Arduino_Libraries/` | [`examples/arduino/libraries/`](examples/arduino/libraries/) |
+| `02_Example/Arduino/` | [`examples/arduino/examples/`](examples/arduino/examples/) |
+| `02_Example/ESP-IDF/` | [`examples/esp-idf/`](examples/esp-idf/) |
+| `02_Example/ESPHome/` | [`examples/esphome/`](examples/esphome/README.md) |
+| `02_Example/XiaoZhi/` | [`examples/xiaozhi/`](examples/xiaozhi/) |
+| `03_Firmware/` | [`firmware/`](firmware/) |
+
 ## 🚀 Getting Started
 
-Pre-built firmware is available in [`03_Firmware/`](03_Firmware). For build environments, flashing steps, pin mappings, and configuration, refer to the [documentation page](https://docs.waveshare.com/ESP32-S3-RLCD-4.2).
+Pre-built firmware is available in [`firmware/`](firmware/). For build environments, flashing steps, pin mappings, and configuration, refer to the [documentation page](https://docs.waveshare.com/ESP32-S3-RLCD-4.2).
 
 <details>
 <summary>Arduino IDE Tools Configuration</summary>
