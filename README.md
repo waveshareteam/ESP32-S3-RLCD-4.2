@@ -18,7 +18,7 @@ This repository provides sample programs, Arduino libraries, and factory firmwar
 ├── 01_Arduino_Libraries/   # Third-party libraries (SensorLib, U8g2, LVGL)
 ├── 02_Example/             # Sample programs for Arduino, ESP-IDF, ESPHome, and XiaoZhi
 ├── 03_Firmware/            # Pre-built firmware (.bin)
-└── Tools Configuration.png # Arduino IDE board settings reference
+└── Tools-Configuration.png # Arduino IDE board settings reference
 ```
 
 ## Getting Started
