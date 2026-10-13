@@ -5,3 +5,11 @@ examples/esp-idf/*/managed_components/
 examples/esp-idf/*/sdkconfig
 examples/esp-idf/*/sdkconfig.old
 examples/esp-idf/*/dependencies.lock
+
+# Local editor and tool settings.
+/.agents/
+/.claude/
+/.codex/
+/.cursor/
+/.idea/
+/.vscode/
