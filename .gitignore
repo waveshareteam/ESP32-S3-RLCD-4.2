@@ -1,0 +1,7 @@
+# ESP-IDF build outputs and generated configuration.
+# Project settings are kept in each example's sdkconfig.defaults.
+02_Example/ESP-IDF/*/build/
+02_Example/ESP-IDF/*/managed_components/
+02_Example/ESP-IDF/*/sdkconfig
+02_Example/ESP-IDF/*/sdkconfig.old
+02_Example/ESP-IDF/*/dependencies.lock
