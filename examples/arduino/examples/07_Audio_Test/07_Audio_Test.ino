@@ -14,7 +14,7 @@ EventGroupHandle_t CodecGroups;
 
 DisplayPort RlcdPort(12, 11, 5, 40, 41, 400, 300);
 
-static void Lvgl_FlushCallback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map) {
+static void Lvgl_FlushCallback(lv_display_t *drv, const lv_area_t *area, uint8_t *color_map) {
   uint16_t *buffer = (uint16_t *)color_map;
   for (int y = area->y1; y <= area->y2; y++) {
     for (int x = area->x1; x <= area->x2; x++) {

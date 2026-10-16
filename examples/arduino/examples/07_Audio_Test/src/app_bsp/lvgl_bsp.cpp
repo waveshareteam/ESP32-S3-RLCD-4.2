@@ -5,9 +5,9 @@
 #include <esp_timer.h>
 #include "lvgl_bsp.h"
 
-static lv_disp_draw_buf_t disp_buf; 		// contains internal graphic buffer(s) called draw buffer(s)
-static lv_disp_drv_t disp_drv;      		// contains callback functions
 static SemaphoreHandle_t lvgl_mux = NULL;
+#define BYTES_PER_PIXEL (LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565))
+
 
 static const char *TAG = "LvglPort";
 
@@ -51,24 +51,21 @@ static void Lvgl_port_task(void *arg)
 }
 
 
-void Lvgl_PortInit(int width, int height,DispFlushCb flush_cb) {
+void Lvgl_PortInit(int width, int height, DispFlushCb flush_cb) {
     lvgl_mux = xSemaphoreCreateMutex();
     lv_init();
-    lv_color_t *buffer1 = (lv_color_t *)heap_caps_malloc(width * height * sizeof(lv_color_t) , MALLOC_CAP_SPIRAM);
-  	assert(buffer1);
-	lv_color_t *buffer2 = (lv_color_t *)heap_caps_malloc(width * height * sizeof(lv_color_t) , MALLOC_CAP_SPIRAM);
-  	assert(buffer2);
+    lv_display_t * disp = lv_display_create(width, height); /* 以水平和垂直分辨率（像素）进行基本初始化 */
+    lv_display_set_flush_cb(disp, flush_cb);
+	
+	size_t buffer_size = width * height * BYTES_PER_PIXEL;
+	uint8_t *buffer_1 = NULL;
+    uint8_t *buffer_2 = NULL;
+    buffer_1 = (uint8_t *)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM);
+	buffer_2 = (uint8_t *)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM);
+    assert(buffer_1);
+    assert(buffer_2);
 
-    lv_disp_draw_buf_init(&disp_buf, buffer1, buffer2, width * height);
-    ESP_LOGI(TAG, "Register display driver to LVGL");
-
-    lv_disp_drv_init(&disp_drv);
-  	disp_drv.hor_res = width;
-  	disp_drv.ver_res = height;
-  	disp_drv.flush_cb = flush_cb;
-	disp_drv.full_refresh = 1;
-  	disp_drv.draw_buf = &disp_buf;
-  	lv_disp_drv_register(&disp_drv);
+    lv_display_set_buffers(disp, buffer_1, buffer_2, buffer_size, LV_DISPLAY_RENDER_MODE_FULL);
 
     ESP_LOGI(TAG, "Install LVGL tick timer");
   	esp_timer_create_args_t lvgl_tick_timer_args = {};
