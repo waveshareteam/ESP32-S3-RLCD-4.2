@@ -88,7 +88,6 @@ ESPHome configurations are in [`examples/esphome`](examples/esphome/README.md) a
 | Framework | Version | Examples |
 | --- | --- | ---: |
 | ESP-IDF | `v5.5.5` | 11 |
-| ESP-IDF | `v6.1` | 11 |
 | Arduino-ESP32 | `3.3.12` | 9 |
 
 ## 📚 Resources

@@ -86,7 +86,6 @@ ESPHome 配置位于 [`examples/esphome`](examples/esphome/README_ZH.md)，小�
 | 开发框架 | 版本 | 示例数 |
 | --- | --- | ---: |
 | ESP-IDF | `v5.5.5` | 11 |
-| ESP-IDF | `v6.1` | 11 |
 | Arduino-ESP32 | `3.3.12` | 9 |
 
 ## 📚 资料
