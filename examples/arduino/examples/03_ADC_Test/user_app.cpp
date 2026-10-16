@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <freertos/freeRTOS.h>
+#include <freertos/FreeRTOS.h>
 #include <esp_log.h>
 
 #include "adc_bsp.h"
