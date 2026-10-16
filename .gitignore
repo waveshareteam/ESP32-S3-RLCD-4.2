@@ -1,15 +1,22 @@
-# ESP-IDF build outputs and generated configuration.
-# Project settings are kept in each example's sdkconfig.defaults.
-examples/esp-idf/*/build/
-examples/esp-idf/*/managed_components/
-examples/esp-idf/*/sdkconfig
-examples/esp-idf/*/sdkconfig.old
-examples/esp-idf/*/dependencies.lock
+**/.vscode
+**/.idea
+**/build
+**/managed_components
+**/dependencies.lock
+**/sdkconfig
+**/sdkconfig.old
+**/__pycache__/
+release-artifacts/
+release-downloads/
+release-dist/
 
-# Local editor and tool settings.
-/.agents/
-/.claude/
-/.codex/
-/.cursor/
-/.idea/
-/.vscode/
+# Local AI coding agent state
+.claude/
+.cursor/
+.codex/
+.gemini/
+.windsurf/
+.continue/
+.roo/
+.cline/
+.aider*
