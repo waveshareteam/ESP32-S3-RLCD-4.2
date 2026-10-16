@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/waveshareteam/esp32-repo-template/v1/schema/product.schema.json",
+  "product": "ESP32-S3-RLCD-4.2",
+  "product_url": "https://www.waveshare.com/esp32-s3-rlcd-4.2.htm",
+  "tier": 1,
+  "target": "esp32s3",
+  "esp_idf": { "versions": ["v5.5.5", "v6.1"] },
+  "arduino": {
+    "core": "3.3.12",
+    "fqbn": "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,FlashMode=qio,PartitionScheme=app3M_fat9M_16MB,USBMode=hwcdc,CDCOnBoot=cdc"
+  }
+}
