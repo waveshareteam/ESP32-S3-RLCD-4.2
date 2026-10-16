@@ -1,28 +1,28 @@
-# ST7305 U8g2 Counter
+# 10_U8G2_Test
 
-[中文](README_ZH.md)
+[English](README.md) | [简体中文](README_ZH.md)
 
-Arduino sketch for an ESP32-S3 board with an ST7305 300x400 RLCD panel.
+## What It Does
 
-## Requirements
+Draws a frame counter on the reflective LCD with the U8g2 graphics library.
 
-- Arduino IDE or `arduino-cli`
-- ESP32 Arduino core
-- U8g2 library
+## Hardware Required
 
-## Default Pins
+- ESP32-S3-RLCD-4.2 development board
 
-- SCK: GPIO 11
-- MOSI: GPIO 12
-- DC: GPIO 5
-- CS: GPIO 40
-- RST: GPIO 41
+## How to Run
 
-## What It Shows
+1. Install the `esp32` board package and make [`examples/arduino/libraries/`](../../libraries/)
+   available as your sketchbook `libraries` folder.
+2. Select **ESP32S3 Dev Module** and set Flash Size **16MB**, Partition Scheme
+   **16M Flash (3MB APP/9.9MB FATFS)**, PSRAM **OPI PSRAM**, USB CDC On Boot **Enabled**
+   ([screenshot](../../../../docs/images/arduino-tools-configuration.png)).
+3. Open `10_U8G2_Test.ino` and upload.
 
-- A centered frame counter
-- `ST7305 refresh counter` below the number
-- FPS, frame time, and flush time at the bottom
-- Serial log at 115200 baud
+## Expected Result
 
-Open `10_U8G2_Test.ino` in Arduino IDE and upload to the ESP32-S3 board.
+The display shows an increasing counter with `ST7305 refresh counter` below it and the frame rate at the bottom; the serial monitor prints the same timing data.
+
+## Troubleshooting
+
+None yet.
