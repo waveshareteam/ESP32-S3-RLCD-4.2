@@ -1,84 +1,104 @@
 <div align="center">
   <h1>ESP32-S3-RLCD-4.2</h1>
-  <p><strong>基于 ESP32-S3 的 4.2 英寸全反射屏 AIoT 开发板</strong></p>
+  <p><strong>ESP32-S3 4.2 英寸 300 × 400 反射式 LCD AIoT 开发板</strong></p>
+  <p><a href="README.md">English</a> | <strong>简体中文</strong></p>
   <p>
-    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/waveshareteam/ESP32-S3-RLCD-4.2"></a>
+    <a href="https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/actions/workflows/build.yml"><img alt="构建" src="https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/actions/workflows/build.yml/badge.svg"></a>
+    <a href="https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/waveshareteam/ESP32-S3-RLCD-4.2"></a>
+    <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/github/license/waveshareteam/ESP32-S3-RLCD-4.2"></a>
   </p>
   <p>
-    <a href="README.md">English</a> ·
-    <a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2.htm">🌐 产品页面</a> ·
-    <a href="https://docs.waveshare.net/ESP32-S3-RLCD-4.2">📚 文档</a> ·
-    <a href="firmware/">📦 出厂固件</a> ·
-    <a href="examples/esp-idf/">🧩 ESP-IDF 示例</a> ·
-    <a href="examples/arduino/examples/">🔧 Arduino 示例</a>
+    <a href="https://www.waveshare.com/esp32-s3-rlcd-4.2.htm">🌐 产品</a> &middot;
+    <a href="https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/releases/latest">📦 固件</a> &middot;
+    <a href="examples/esp-idf/">🧩 ESP-IDF</a> &middot;
+    <a href="examples/arduino/examples/">🔧 Arduino</a> &middot;
+    <a href="https://docs.waveshare.com/ESP32-S3-RLCD-4.2">📚 文档</a>
   </p>
-  <p>
-    <img src="assets/Product-1.webp" alt="Waveshare ESP32-S3-RLCD-4.2" width="500">
-  </p>
+  <p><img src="docs/images/esp32-s3-rlcd-4.2.webp" alt="ESP32-S3-RLCD-4.2 开发板" width="500"></p>
 </div>
 
 ---
 
 ## ✨ 概述
 
-ESP32-S3-RLCD-4.2 是一款基于 ESP32-S3-WROOM-1-N16R8（双核 Xtensa LX7 @ 240 MHz，8 MB PSRAM，16 MB Flash）的全反射屏 AIoT 开发板，支持 2.4 GHz Wi-Fi 和 Bluetooth 5 LE。板载 4.2 英寸 300 × 400 全反射 LCD（无需背光）和音频模块（ES8311 + ES7210 双麦克风阵列），并集成 PCF85063 RTC、SHTC3 温湿度传感器、TF 卡槽、USB Type-C 及 18650 电池座，适用于智能摆件、电子日历和 AI 智能体等应用。
+ESP32-S3-RLCD-4.2 是一块 AIoT 开发板，采用 ESP32-S3-WROOM-1-N16R8 模组（16 MB Flash、8 MB PSRAM），
+配备无需背光的 4.2 英寸反射式 LCD。本仓库提供它的 ESP-IDF 和 Arduino 示例，以及可直接烧录的示例固件。
 
-## 🗂️ 仓库结构
-
-本仓库提供 ESP32-S3-RLCD-4.2 的示例程序、Arduino 库和出厂固件。
-
-```
-.
-├── examples/
-│   ├── arduino/
-│   │   ├── examples/       # Arduino 示例程序
-│   │   └── libraries/      # 第三方库（SensorLib、U8g2、LVGL）
-│   ├── esp-idf/            # ESP-IDF 示例程序
-│   ├── esphome/            # ESPHome YAML 配置
-│   └── xiaozhi/            # 小智 AI 应用源码
-├── firmware/               # 预编译固件（.bin）
-└── Tools-Configuration.png # Arduino IDE 开发板配置参考
-```
-
-仓库目录结构已调整。如果你是从旧链接或旧教程过来的，可按下表找到新位置。
-
-| 原路径 | 现路径 |
+| 功能 | 器件或接口 |
 | --- | --- |
-| `01_Arduino_Libraries/` | [`examples/arduino/libraries/`](examples/arduino/libraries/) |
-| `02_Example/Arduino/` | [`examples/arduino/examples/`](examples/arduino/examples/) |
-| `02_Example/ESP-IDF/` | [`examples/esp-idf/`](examples/esp-idf/) |
-| `02_Example/ESPHome/` | [`examples/esphome/`](examples/esphome/README_ZH.md) |
-| `02_Example/XiaoZhi/` | [`examples/xiaozhi/`](examples/xiaozhi/) |
-| `03_Firmware/` | [`firmware/`](firmware/) |
+| MCU | ESP32-S3-WROOM-1-N16R8，2.4 GHz Wi-Fi 和蓝牙 5 LE |
+| 显示 | 4.2 英寸 300 × 400 反射式 LCD，ST7305 控制器 |
+| 音频 | ES8311 音频编解码器；ES7210 ADC 双麦克风阵列 |
+| RTC | PCF85063 |
+| 传感器 | SHTC3 温湿度传感器 |
+| 存储 | TF 卡槽 |
+| 供电 | USB Type-C 和 18650 电池座 |
 
-## 🚀 快速开始
+## 📦 快速开始
 
-预编译固件位于 [`firmware/`](firmware/)。构建环境、烧录步骤、引脚映射及配置说明请参阅[产品文档页面](https://docs.waveshare.net/ESP32-S3-RLCD-4.2)。
+体验示例最快的方法是使用[最新版本](https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/releases/latest)中打包好的可烧录固件。
 
-<details>
-<summary>Arduino IDE 开发板配置</summary>
+1. 下载所需示例和框架版本对应的 `*-combined.zip`。
+2. 解压后通过 `python -m pip install esptool` 安装 esptool。
+3. 通过 USB 连接开发板。
+4. Windows 运行 `flash_combined.bat COMx`，Linux 运行 `./flash_combined.sh /dev/ttyACM0`。
+5. 如果开发板未自动重启，请手动复位。
 
-<img src="Tools-Configuration.png" alt="Arduino IDE Tools Configuration" width="500">
+出厂固件（恢复开箱演示）：在 [Releases 页面](https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/releases)下载文件名带 `factory_firmware` 的文件。
 
-</details>
+## 🧪 示例
 
-## 🤝 贡献
+### ESP-IDF
 
-我们欢迎您的贡献！您可以通过以下方式提供帮助：
+| 示例 | 主要功能 |
+| --- | --- |
+| [01_WIFI_AP](examples/esp-idf/01_WIFI_AP/README_ZH.md) | Wi-Fi 热点 |
+| [02_WIFI_STA](examples/esp-idf/02_WIFI_STA/README_ZH.md) | Wi-Fi 连接 |
+| [03_ADC_Test](examples/esp-idf/03_ADC_Test/README_ZH.md) | 电池电压 |
+| [04_I2C_PCF85063](examples/esp-idf/04_I2C_PCF85063/README_ZH.md) | RTC 时钟 |
+| [05_I2C_SHTC3](examples/esp-idf/05_I2C_SHTC3/README_ZH.md) | 温湿度 |
+| [06_SD_Card](examples/esp-idf/06_SD_Card/README_ZH.md) | TF 卡 |
+| [07_Audio_Test](examples/esp-idf/07_Audio_Test/README_ZH.md) | 音频 |
+| [08_LVGL_V8_Test](examples/esp-idf/08_LVGL_V8_Test/README_ZH.md) | LVGL 8 |
+| [09_LVGL_V9_Test](examples/esp-idf/09_LVGL_V9_Test/README_ZH.md) | LVGL 9 |
+| [10_FactoryProgram](examples/esp-idf/10_FactoryProgram/README_ZH.md) | 出厂测试程序 |
+| [11_U8G2_Test](examples/esp-idf/11_U8G2_Test/README_ZH.md) | U8g2 |
 
-1. Fork 本仓库。
-2. 为您的新功能或 Bug 修复创建一个新分支。
-3. 提交您的更改并附上清晰的描述。
-4. 提交 Pull Request 以供审核。
+### Arduino
 
-## 🤝 问题与支持
+| 示例 | 主要功能 |
+| --- | --- |
+| [01_WIFI_AP](examples/arduino/examples/01_WIFI_AP/README_ZH.md) | Wi-Fi 热点 |
+| [02_WIFI_STA](examples/arduino/examples/02_WIFI_STA/README_ZH.md) | Wi-Fi 连接 |
+| [03_ADC_Test](examples/arduino/examples/03_ADC_Test/README_ZH.md) | 电池电压 |
+| [04_I2C_PCF85063](examples/arduino/examples/04_I2C_PCF85063/README_ZH.md) | RTC 时钟 |
+| [05_I2C_SHTC3](examples/arduino/examples/05_I2C_SHTC3/README_ZH.md) | 温湿度 |
+| [06_SD_Card](examples/arduino/examples/06_SD_Card/README_ZH.md) | TF 卡 |
+| [07_Audio_Test](examples/arduino/examples/07_Audio_Test/README_ZH.md) | 音频 |
+| [09_LVGL_V9_Test](examples/arduino/examples/09_LVGL_V9_Test/README_ZH.md) | LVGL 9 |
+| [10_U8G2_Test](examples/arduino/examples/10_U8G2_Test/README_ZH.md) | U8g2 |
 
-请创建 [Issue](https://gitee.com/waveshare/ESP32-S3-RLCD-4.2/issues) 并提供详细信息，或联系微雪团队并提供订单号以获取技术支持。
+草图使用的库随仓库提供，位于 [`examples/arduino/libraries`](examples/arduino/libraries/)。
+ESPHome 配置位于 [`examples/esphome`](examples/esphome/README_ZH.md)，小智 AI 固件源码位于 [`examples/xiaozhi`](examples/xiaozhi/)。
 
-## 📄 许可
+## 🛠️ 开发环境
 
-本仓库遵循 Apache License 2.0 许可。详情请参阅 [LICENSE](LICENSE) 文件。
+| 开发框架 | 版本 | 示例数 |
+| --- | --- | ---: |
+| ESP-IDF | `v5.5.5` | 11 |
+| ESP-IDF | `v6.1` | 11 |
+| Arduino-ESP32 | `3.3.12` | 9 |
 
----
+## 📚 资料
 
-感谢您使用微雪电子产品！🚀
+- [产品页面](https://www.waveshare.com/esp32-s3-rlcd-4.2.htm)
+- [Wiki](https://docs.waveshare.com/ESP32-S3-RLCD-4.2)（原理图、引脚图和教程）
+
+## 🤝 支持
+
+- 示例或仓库问题：[提交 issue](https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/issues/new/choose)。
+- 产品使用、硬件或订单问题：[微雪技术支持](https://service.waveshare.com/)。
+
+## 📄 许可证
+
+Apache License 2.0，详见 [LICENSE](LICENSE)。
