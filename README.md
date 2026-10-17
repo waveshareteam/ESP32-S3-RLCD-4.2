@@ -28,6 +28,7 @@ ESP-IDF and Arduino examples and ready-to-flash example firmware.
 | Feature | Device / interface |
 | --- | --- |
 | MCU | ESP32-S3-WROOM-1-N16R8, 2.4 GHz Wi-Fi and Bluetooth 5 LE |
+| Memory | 16 MB Flash, 8 MB PSRAM |
 | Display | 4.2-inch 300 x 400 reflective LCD, ST7305 controller |
 | Audio | ES8311 codec; ES7210 ADC with a dual-microphone array |
 | RTC | PCF85063 |

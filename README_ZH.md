@@ -27,11 +27,12 @@ ESP32-S3-RLCD-4.2 是一块 AIoT 开发板，采用 ESP32-S3-WROOM-1-N16R8 模�
 | 功能 | 器件或接口 |
 | --- | --- |
 | MCU | ESP32-S3-WROOM-1-N16R8，2.4 GHz Wi-Fi 和蓝牙 5 LE |
+| 存储 | 16 MB Flash，8 MB PSRAM |
 | 显示 | 4.2 英寸 300 × 400 反射式 LCD，ST7305 控制器 |
 | 音频 | ES8311 音频编解码器；ES7210 ADC 双麦克风阵列 |
 | RTC | PCF85063 |
 | 传感器 | SHTC3 温湿度传感器 |
-| 存储 | TF 卡槽 |
+| 扩展存储 | TF 卡槽 |
 | 供电 | USB Type-C 和 18650 电池座 |
 
 ## 📦 快速开始
