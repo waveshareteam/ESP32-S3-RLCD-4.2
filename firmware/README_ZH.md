@@ -13,5 +13,5 @@
 ```bash
 python -m pip install esptool
 esptool.py --chip esp32s3 --port <PORT> erase_flash
-esptool.py --chip esp32s3 --port <PORT> write_flash 0x0 ESP32-S3-RLCD-4.2_FactoryOnly_20260120.bin
+esptool.py --chip esp32s3 --port <PORT> write_flash 0x0 <FILE>.bin
 ```
