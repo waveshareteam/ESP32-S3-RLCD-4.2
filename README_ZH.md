@@ -45,7 +45,7 @@ ESP32-S3-RLCD-4.2 是一块 AIoT 开发板，采用 ESP32-S3-WROOM-1-N16R8 模�
 4. Windows 运行 `flash_combined.bat COMx`，Linux 运行 `./flash_combined.sh /dev/ttyACM0`。
 5. 如果开发板未自动重启，请手动复位。
 
-出厂固件（恢复开箱演示）：在 [Releases 页面](https://github.com/waveshareteam/ESP32-S3-RLCD-4.2/releases)下载文件名带 `FactoryOnly` 的文件。
+出厂固件（恢复开箱演示）：在 [`firmware`](firmware/README_ZH.md) 目录下载文件名带 `FactoryOnly` 的文件。
 
 ## 🧪 示例
 
