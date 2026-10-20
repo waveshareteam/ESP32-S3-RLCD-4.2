@@ -81,7 +81,7 @@ Factory firmware (restores the out-of-box demo): download the file whose name co
 | [10_U8G2_Test](examples/arduino/examples/10_U8G2_Test/) | U8g2 |
 
 Libraries used by the sketches are bundled in [`examples/arduino/libraries`](examples/arduino/libraries/).
-ESPHome configurations are in [`examples/esphome`](examples/esphome/README.md) and the XiaoZhi AI firmware source in [`examples/xiaozhi`](examples/xiaozhi/).
+ESPHome configurations are in [`examples/esphome`](examples/esphome/README.md). The XiaoZhi AI firmware source for this board is in the upstream [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32/tree/main/main/boards/waveshare/esp32-s3-rlcd-4.2) repository.
 
 ## 🛠️ Development Environment
 

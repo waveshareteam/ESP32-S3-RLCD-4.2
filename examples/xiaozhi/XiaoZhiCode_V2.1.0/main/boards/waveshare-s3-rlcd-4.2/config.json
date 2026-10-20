@@ -1,9 +1,0 @@
-{
-    "target": "esp32s3",
-    "builds": [
-        {
-            "name": "waveshare-s3-rlcd-4.2",
-            "sdkconfig_append": []
-        }
-    ]
-}

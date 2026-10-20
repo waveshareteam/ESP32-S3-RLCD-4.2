@@ -79,7 +79,7 @@ ESP32-S3-RLCD-4.2 是一块 AIoT 开发板，采用 ESP32-S3-WROOM-1-N16R8 模�
 | [10_U8G2_Test](examples/arduino/examples/10_U8G2_Test/README_ZH.md) | U8g2 |
 
 草图使用的库随仓库提供，位于 [`examples/arduino/libraries`](examples/arduino/libraries/)。
-ESPHome 配置位于 [`examples/esphome`](examples/esphome/README_ZH.md)，小智 AI 固件源码位于 [`examples/xiaozhi`](examples/xiaozhi/)。
+ESPHome 配置位于 [`examples/esphome`](examples/esphome/README_ZH.md)。本产品的小智 AI 固件源码在上游 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32/tree/main/main/boards/waveshare/esp32-s3-rlcd-4.2) 仓库。
 
 ## 🛠️ 开发环境
 
