@@ -45,7 +45,7 @@ ESP32-S3-RLCD-4.2 是一块 AIoT 开发板，采用 ESP32-S3-WROOM-1-N16R8 模�
 4. Windows 运行 `flash_combined.bat COMx`，Linux 运行 `./flash_combined.sh /dev/ttyACM0`。
 5. 如果开发板未自动重启，请手动复位。
 
-出厂固件（恢复开箱演示）：在 [`firmware`](firmware/) 目录下载文件名带 `FactoryOnly` 的文件。
+出厂固件（恢复开箱演示）：在 [`firmware`](firmware/) 目录下载文件名带 `FactoryOnly` 的文件，源码位于 [`examples/factory`](examples/factory/)。
 
 ## 🧪 示例
 
@@ -62,7 +62,6 @@ ESP32-S3-RLCD-4.2 是一块 AIoT 开发板，采用 ESP32-S3-WROOM-1-N16R8 模�
 | [07_Audio_Test](examples/esp-idf/07_Audio_Test/README_ZH.md) | 音频 |
 | [08_LVGL_V8_Test](examples/esp-idf/08_LVGL_V8_Test/README_ZH.md) | LVGL 8 |
 | [09_LVGL_V9_Test](examples/esp-idf/09_LVGL_V9_Test/README_ZH.md) | LVGL 9 |
-| [10_FactoryProgram](examples/esp-idf/10_FactoryProgram/README_ZH.md) | 出厂测试程序 |
 | [11_U8G2_Test](examples/esp-idf/11_U8G2_Test/README_ZH.md) | U8g2 |
 
 ### Arduino
@@ -86,7 +85,7 @@ ESPHome 配置位于 [`examples/esphome`](examples/esphome/README_ZH.md)，小�
 
 | 开发框架 | 版本 | 示例数 |
 | --- | --- | ---: |
-| ESP-IDF | `v5.5.5` | 11 |
+| ESP-IDF | `v5.5.5` | 10 |
 | Arduino-ESP32 | `3.3.12` | 9 |
 
 ## 📚 资料

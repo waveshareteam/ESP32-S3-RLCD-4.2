@@ -1,4 +1,4 @@
-# 10_FactoryProgram
+# Factory Firmware
 
 [English](README.md) | [简体中文](README_ZH.md)
 

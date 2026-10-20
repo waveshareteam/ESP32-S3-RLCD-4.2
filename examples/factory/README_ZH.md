@@ -1,4 +1,4 @@
-# 10_FactoryProgram
+# 出厂固件
 
 [English](README.md) | [简体中文](README_ZH.md)
 

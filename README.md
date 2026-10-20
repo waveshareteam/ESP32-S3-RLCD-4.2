@@ -47,7 +47,7 @@ The fastest way to try an example is a ready-to-flash package from the
 4. Run `flash_combined.bat COMx` on Windows or `./flash_combined.sh /dev/ttyACM0` on Linux.
 5. Reset the board if it does not restart automatically.
 
-Factory firmware (restores the out-of-box demo): download the file whose name contains `FactoryOnly` from the [`firmware`](firmware/) folder.
+Factory firmware (restores the out-of-box demo): download the file whose name contains `FactoryOnly` from the [`firmware`](firmware/) folder. Its source is in [`examples/factory`](examples/factory/).
 
 ## 🧪 Examples
 
@@ -64,7 +64,6 @@ Factory firmware (restores the out-of-box demo): download the file whose name co
 | [07_Audio_Test](examples/esp-idf/07_Audio_Test/) | Audio |
 | [08_LVGL_V8_Test](examples/esp-idf/08_LVGL_V8_Test/) | LVGL 8 |
 | [09_LVGL_V9_Test](examples/esp-idf/09_LVGL_V9_Test/) | LVGL 9 |
-| [10_FactoryProgram](examples/esp-idf/10_FactoryProgram/) | Factory test program |
 | [11_U8G2_Test](examples/esp-idf/11_U8G2_Test/) | U8g2 |
 
 ### Arduino
@@ -88,7 +87,7 @@ ESPHome configurations are in [`examples/esphome`](examples/esphome/README.md) a
 
 | Framework | Version | Examples |
 | --- | --- | ---: |
-| ESP-IDF | `v5.5.5` | 11 |
+| ESP-IDF | `v5.5.5` | 10 |
 | Arduino-ESP32 | `3.3.12` | 9 |
 
 ## 📚 Resources
