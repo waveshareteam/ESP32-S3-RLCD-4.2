@@ -1,0 +1,6 @@
+# Keep LF line ends in the working tree whatever core.autocrlf says: the shell scripts in tools/ run in
+# WSL / Linux (a CR breaks them) and the tests compare docs/ESP32-S3-RLCD-Config.example.txt byte for byte.
+* text=auto eol=lf
+*.png binary
+*.pgm binary
+*.bin binary

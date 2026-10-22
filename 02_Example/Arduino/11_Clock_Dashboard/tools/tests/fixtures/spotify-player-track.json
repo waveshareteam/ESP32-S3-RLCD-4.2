@@ -1,0 +1,48 @@
+{
+  "device": {
+    "id": "0d1841b0976bae2a3a310dd74c0f3df354899bc8",
+    "is_active": true,
+    "is_private_session": false,
+    "is_restricted": false,
+    "name": "Kitchen speaker",
+    "type": "Speaker",
+    "volume_percent": 59,
+    "supports_volume": true
+  },
+  "repeat_state": "off",
+  "shuffle_state": true,
+  "context": {
+    "type": "playlist",
+    "href": "https://api.spotify.com/v1/playlists/37i9dQZF1DXcBWIGoYBM5M",
+    "external_urls": { "spotify": "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" },
+    "uri": "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"
+  },
+  "timestamp": 1790000000000,
+  "progress_ms": 83000,
+  "is_playing": true,
+  "item": {
+    "album": {
+      "album_type": "album",
+      "total_tracks": 14,
+      "name": "After Hours",
+      "release_date": "2020-03-20",
+      "images": [
+        { "url": "https://i.scdn.co/image/ab67616d0000b2738863bc11d2aa12b54f5aeb36", "height": 640, "width": 640 }
+      ],
+      "artists": [ { "name": "The Weeknd", "type": "artist", "uri": "spotify:artist:1Xyo4u8uXC1ZmMpatF05PJ" } ]
+    },
+    "artists": [
+      { "name": "The Weeknd", "type": "artist", "uri": "spotify:artist:1Xyo4u8uXC1ZmMpatF05PJ" },
+      { "name": "Daft Punk", "type": "artist", "uri": "spotify:artist:4tZwfgrHOc3mvqYlEYSvVi" }
+    ],
+    "disc_number": 1,
+    "duration_ms": 200040,
+    "explicit": false,
+    "name": "Blinding Lights",
+    "track_number": 9,
+    "type": "track",
+    "uri": "spotify:track:0VjIjW4GlUZAMYd2vXMi3b"
+  },
+  "currently_playing_type": "track",
+  "actions": { "disallows": { "resuming": true } }
+}

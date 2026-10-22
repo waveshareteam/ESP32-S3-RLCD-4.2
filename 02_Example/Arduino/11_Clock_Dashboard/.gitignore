@@ -1,0 +1,12 @@
+# Local credentials - copy secrets.example.h to secrets.h
+secrets.h
+
+# Firmware images: what "Sketch > Export Compiled Binary" (or arduino-cli --export-binaries) writes here.
+# They hold whatever secrets.h had (the WiFi password, the Spotify id), so they must never be committed.
+/build/
+/*.bin
+
+# Host-side UI preview tool: build products
+tools/ui_preview/build/
+tools/ui_preview/out/
+tools/tests/build/
