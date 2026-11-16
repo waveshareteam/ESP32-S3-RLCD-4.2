@@ -1,0 +1,8 @@
+test,firmware,wifi,wifi_mode,wifi_power_save,cpu_idle_mhz,spotify_live,console,light_sleep,display_power,battery_capacity_mah,card,music,date,time,uptime,clock_shown,radio_on_pct,radio_sessions,asleep_pct,battery_v,battery_pct,battery_state,left,pct_per_hour,over_min,clock_ma,meter_ma,free_kb,frames_sent,frames_late,frames_worst_ms,notes
+1 stock wifi,,on,always,normal,off,on,on,off,normal,,,,,,,,,,,,,,,,,,,,,,,
+2 stock no wifi,,off,always,normal,off,on,on,off,normal,,,,,,,,,,,,,,,,,,,,,,,
+3 middle,,on,sync,max,40,on,auto,off,normal,,,,,,,,,,,,,,,,,,,,,,,
+4 20 MHz wifi,,on,sync,max,20,off,auto,off,normal,,,,,,,,,,,,,,,,,,,,,,,
+5 20 MHz no wifi,,off,sync,max,20,off,auto,off,normal,,,,,,,,,,,,,,,,,,,,,,,
+6 light sleep,,on,sync,max,20,off,auto,on,normal,,,,,,,,,,,,,,,,,,,,,,,
+7 display low,,on,sync,max,20,off,auto,on,low,,,,,,,,,,,,,,,,,,,,,,,

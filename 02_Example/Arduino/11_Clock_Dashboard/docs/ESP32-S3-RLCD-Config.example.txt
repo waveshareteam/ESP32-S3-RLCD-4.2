@@ -1,0 +1,206 @@
+# ESP32-S3 RLCD clock: settings file
+#
+# The clock found no settings file on this card, so it wrote this one.  Every setting
+# below is commented out (it starts with #) and shows the value the clock uses now.
+# To change one: remove the # in front of its line, edit the value, save the file,
+# put the card back in the clock and restart it.  The clock saves what it reads in its
+# own flash, so the card can be taken out again afterwards.
+#
+# The rules
+#   * One "name = value" per line.  Spaces around the = do not matter.
+#   * Values can be in quotes or not: "My Network" and My Network mean the same.
+#     Use quotes if a value contains a # or begins or ends with a space.
+#   * Names ignore case, spaces, - and _: wifi_ssid, WiFi SSID and Wi-Fi-SSID are one setting.
+#   * Lines starting with # or ; are comments.
+#   * A setting you leave out keeps whatever the clock has now.
+#   * A line with nothing after the = (for example "timezone =") makes the clock forget
+#     that saved setting and go back to its built-in default.
+#   * reset_all = yes forgets every saved setting first; remove that line afterwards.
+#   * What the clock does not understand is ignored and listed on its Power and settings
+#     page (the second info page).
+#
+# WiFi passwords are plain text in this file and in the clock's flash: keep the card
+# to yourself.
+
+# ---- WiFi --------------------------------------------------------
+#
+# on or off.  Off keeps the radio off: no network time, weather or Spotify, and less
+# power drawn.  Without network time the clock runs on its own crystal and drifts
+# (see the note at the end of this file).
+# wifi = on
+#
+# Name of your WiFi network (2.4 GHz only).
+# wifi_ssid = ""
+#
+# Its password.  Kept as plain text here and in the clock's flash.  For an open
+# network write two quotes: wifi_password = ""
+# wifi_password = "your password"
+#
+# A second network, for when the first cannot be joined (a phone's hotspot, another
+# router).  The clock tries the main network first.  While it is on the backup it looks
+# for the main one every 10 minutes and goes back to it.  Empty = no backup.
+# wifi_backup_ssid = ""
+#
+# Its password (for an open network write two quotes).
+# wifi_backup_password = "your password"
+#
+# The clock's name on your network: letters, digits and '-'.
+# hostname = "rlcd-clock"
+#
+# Time server to try first (pool.ntp.org, time.cloudflare.com and time.google.com
+# follow).  Empty = the built-in list.
+# ntp_server = ""
+#
+# normal or max.  Max lets the radio sleep longer between messages: a little less
+# power, but every reply can come up to a third of a second late, the network time
+# included (look at "last step" on the Info page).  The Spotify setup page always
+# runs in normal.
+# wifi_power_save = normal
+#
+# always or sync.  Always keeps the radio connected.  Sync switches it off between syncs: it
+# wakes for the network time (hourly) and the weather (every weather_interval_min), looks at
+# Spotify once each time, and stays on while music plays (see spotify_live), after a key press
+# and on the Now Playing page.  Draws far less on a battery; the Spotify strip and the link page
+# need that page or a key press to wake the radio.  When none of its networks is in range the
+# clock looks again every 2 minutes, later every 5, and at once when a button is pressed.
+# See the README.
+# wifi_mode = always
+
+# ---- Units and formats -------------------------------------------
+#
+# metric (degrees C, km/h) or imperial (degrees F, mph).
+# units = metric
+#
+# 24h or 12h (12h shows AM or PM).
+# time_format = 24h
+#
+# iso (2026-10-04), dmy (04/10/2026), mdy (10/04/2026), dmy-dot (04.10.2026),
+# d-mon-y (4 Oct 2026) or mon-d-y (Oct 4, 2026).
+# date_format = iso
+#
+# on or off.  Shows the ISO week number and the day of the year after the weekday.
+# show_week = on
+
+# ---- Location ----------------------------------------------------
+#
+# Exact coordinates of the clock, in degrees: -31.952 and 115.861, or 31.952 S and
+# 115.861 E.  They win over the place name below.
+# latitude = 0
+# longitude = 0
+#
+# What the status bar shows.  Empty = the name that was found.
+# location_label = ""
+#
+# A place to look up (Open-Meteo), such as Perth or "Paris, France".  Used when no
+# coordinates are set.
+# location = ""
+#
+# Overrides the automatic time zone: an IANA name (Australia/Perth) or a POSIX rule
+# (AWST-8).  Empty = follow the location, which needs WiFi: with wifi = off set it here.
+# timezone = ""
+
+# ---- Spotify -----------------------------------------------------
+#
+# on or off.  Spotify also needs the Client ID below.
+# spotify = on
+#
+# The Client ID of your app in the Spotify developer dashboard (see the README).
+# spotify_client_id = "your client id"
+#
+# on or off.  Only matters with wifi_mode = sync.  On: while music plays the radio stays on
+# and the clock asks Spotify every 10 seconds, so the strip follows your phone within seconds.
+# Off: the radio sleeps while music plays too, and the clock looks again when the track on
+# screen should be over.  Far less radio, but a track skipped or paused on a phone shows late:
+# when it would have ended, or at the next weather update.  KEY presses and the Now Playing
+# page are live either way.
+# spotify_live = on
+
+# ---- Sensors and battery -----------------------------------------
+#
+# Degrees C added to the indoor temperature to make up for the board warming the
+# sensor (the factory value is -4.0).
+# indoor_offset = -4
+#
+# auto or none.  Say none when no battery is fitted (running from USB): the gauge
+# then shows USB, nothing is estimated and the clock never shuts down for a low
+# battery.  The clock cannot tell by itself: on USB the empty battery socket reads
+# like a full battery.
+# battery = auto
+#
+# Capacity of your battery in mAh, so the Power and settings page can show the
+# average current.  0 = unknown.
+# battery_capacity_mah = 0
+#
+# Corrects the battery voltage the clock measures: the real voltage (from a LiPo tester
+# or a meter) divided by what the Power and settings page shows.  1 = no correction.
+# Example: the page says 4.13 V while the tester says 4.20 V, so 4.20 / 4.13 = 1.017.
+# Or type  batcal 4.20  in the serial console: the clock works it out and keeps it.
+# battery_calibration = 1
+#
+# on or off.  Shut down (deep sleep, with a message on the screen) before the battery
+# is flat, so a LiPo is not ruined.  It wakes by itself once charging has brought the
+# battery back, or when you press a button.
+# low_battery_shutdown = on
+#
+# Battery voltage, as measured while the clock runs, at which it shuts down:
+# 3.10 to 3.60 (default 3.30).
+# battery_cutoff_v = 3.3
+
+# ---- Power -------------------------------------------------------
+#
+# 80, 160 or 240.  80 uses the least power and is plenty for a clock.
+# cpu_mhz = 80
+#
+# off, 80, 40 or 20: the CPU clock while the radio is off (wifi = off, or between the syncs
+# of wifi_mode = sync).  Slower draws less and a frame takes longer to draw: about 30 ms at
+# 80, 60 at 40, 120 at 20.  Try 40 first: it is the lowest clock the chip maker gives figures
+# for.  The clock goes back to cpu_mhz while the radio is on, for a few seconds after a button
+# press, and while a computer is on the USB port with the console running (the console may
+# stop below 80 MHz).  off = no change.
+# cpu_idle_mhz = off
+#
+# on, auto or off: the USB serial console (the log and the commands).  On keeps it running.
+# Auto runs it while a computer is on the USB port and shuts it down, with the USB
+# transceiver, once there has been none for 10 seconds; it then stays off until the clock is
+# restarted with the cable in.  Off shuts it down at the end of every start-up, computer or
+# not.  A console that is shut down saves a little power, and the USB port is dead: to upload
+# a firmware, restart the clock with KEY held down (the console then stays on for that run),
+# or hold BOOT while switching it on, or use the SD card.
+# console = on
+#
+# on or off.  On: the clock writes its own power readings (the battery, the runtime estimate,
+# the CPU clock, the radio's share of the time) into its flash as one line of CSV at each start
+# and every 10 minutes, for comparing settings by how fast the battery goes down.  A start
+# with an SD card in copies the log to the card as ESP32-S3-RLCD-PowerLog.csv.  The newest
+# 0.5 to 1 MB are kept (weeks).  The first time, the flash partition for it is formatted.
+# See the README.
+# power_log = off
+#
+# on or off.  On: between the frames, once a second, the processor goes into light sleep instead
+# of idling, whenever nothing needs it: the radio off (wifi = off, or between the syncs of the
+# sync mode), the console shut down (console = auto or off), no button pressed for 8 seconds.
+# KEY and BOOT wake it at once.  While it sleeps its clock runs on an RC oscillator in the chip,
+# less exact than the crystal: the hourly network time puts it right, and without WiFi nothing
+# does.  Not yet tried on the board; see the README.
+# light_sleep = off
+#
+# normal or low: how the display's controller drives the panel.  Low is its low power mode,
+# which refreshes the panel 8 times a second instead of 25.5: less current (how much has not
+# been measured), and a frame shows up 0 to 125 ms after it is sent instead of 0 to 39.  The
+# clock allows for that, so the seconds change up to about 63 ms early or late instead of 20.
+# Not yet tried on the board; see the README.
+# display_power = normal
+
+# ---- Weather -----------------------------------------------------
+#
+# Minutes between weather updates, 5 to 240 (default 15).
+# weather_interval_min = 15
+
+# ---- Clock drift when WiFi is off ---------------------------------
+#
+# With wifi = off the clock cannot ask the network for the time.  It starts from the
+# time kept by its real-time clock chip and then counts with its own crystal, which
+# is good for a second or two a day (10 ppm is about 0.9 seconds a day) and depends on
+# temperature.  Over weeks that adds up to a visible error; nothing corrects it until
+# WiFi has been on for a few minutes again.  If you leave WiFi off, switch it on now
+# and then to let the clock set itself.
