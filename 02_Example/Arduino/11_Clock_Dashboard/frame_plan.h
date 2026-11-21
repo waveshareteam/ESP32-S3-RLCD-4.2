@@ -18,6 +18,11 @@
 // taken when it is drawn, so up to a second before it is on the glass; whatever has to
 // show at once forces a redraw.
 //
+// Slow work (the sensors, the battery, a line of the power log) is kept away from the
+// sends: it may run while the planner is quiet (quiet()), from the end of a draw until
+// kQuietUs before the send of the frame just drawn, whichever second that is for.  So
+// with light sleep it runs in the wake of the draw, and needs no wake of its own.
+//
 // Pure logic with no Arduino dependency: the UI loop asks next() whenever it wakes up
 // and does what it says; tools/tests drives it with simulated clocks and stalls.
 
@@ -50,6 +55,8 @@ class FramePlanner {
   Step next(time_t sec, int32_t usec, bool force) {
     const int32_t usToNext = 1000000 - usec;
     Step st;
+    nowSec_ = sec;  // (for quiet(usec))
+    nowUsec_ = usec;
 
     // A frame prepared for a second that is over, or for one more than two ahead, means the clock was stepped (the
     // hourly time sync) or the loop stalled for a long while: it is dropped, and the second that it is now is drawn at
@@ -80,7 +87,7 @@ class FramePlanner {
         st.action = SEND;
         st.waitUs = waitUs > 0 ? waitUs : 0;
       } else {
-        st.action = quiet(usec) ? IDLE : SLEEP;
+        st.action = quiet(sec, usec) ? IDLE : SLEEP;
         st.waitUs = waitUs;
       }
       return st;
@@ -107,15 +114,25 @@ class FramePlanner {
     return waitUs > kWakeLeadUs ? waitUs - kWakeLeadUs : 0;
   }
 
-  // May slow work (I2C sensors, battery, a line of the power log) run now?  Never close to a send.  A prepared
-  // frame is taken to go out in this second, as it does once its draw is over; at 80 MHz (and at 20 with
-  // display_power = low, where the send begins about 310 ms before the tick) the draw can end just before the
-  // tick, a second and more before its send, and then slow work waits for the tick.  With no frame prepared, the
-  // tick is what counts.  At 20 MHz with display_power = low that leaves slow work about 390 ms of every second.
-  bool quiet(int32_t usec) const {
-    const int32_t left = 1000000 - usec;
-    return prepared_ ? left - sendLeadUs() > kQuietUs : left > kQuietUs;
+  // May slow work (I2C sensors, battery, a line of the power log) run now, `sec` / `usec` being the clock?  Never
+  // close to a send: with a frame prepared, only while its send is more than kQuietUs away, for whichever second it
+  // is.  With display_power = low the send begins a quarter of a second earlier (about 310 ms before the tick at
+  // 20 MHz), so the draw after it ends before the tick, with its own send most of a second off: slow work that is due
+  // runs straight after it, in the same wake.  (This used to take a prepared frame to go out in this second, so slow
+  // work waited for the tick there, and with light sleep that was a sleep of its own every 5 s.  In the high power
+  // mode the draw ends after the tick, and the two rules agree.)  A frame prepared for a second that is over, or for
+  // one more than two ahead (next() drops it), is never quiet; with none prepared, the tick is what counts.  At 20 MHz
+  // with display_power = low that leaves slow work about 520 ms of every second, from some 130 ms before the tick to
+  // 390 ms after it.
+  bool quiet(time_t sec, int32_t usec) const {
+    if (!prepared_) return 1000000 - usec > kQuietUs;
+    if (preparedSec_ < sec || preparedSec_ > sec + 2) return false;  // (which keeps untilSendUs() well in range)
+    return untilSendUs(sec, usec) > kQuietUs;
   }
+  // The same, for the second the last next() was asked in, or the one after it once `usec` has gone back past the
+  // tick since: right while no more than a second goes by between the two, as in a loop that asks next() every time
+  // round; after a longer stall it is a second out.  (The firmware passes the second itself.)
+  bool quiet(int32_t usec) const { return quiet(usec < nowUsec_ ? nowSec_ + 1 : nowSec_, usec); }
 
   // The caller reports what it did.  `scheduled`: the frame is meant to go out at its precise
   // moment (as opposed to a forced redraw), so its timing is worth recording.
@@ -160,7 +177,8 @@ class FramePlanner {
   // How far ahead of its second a frame is sent: the send, and the panel's time to the glass.
   int32_t sendLeadUs() const { return (int32_t)sendCostUs_ + latencyUs_; }
   // From now until the prepared frame is to be sent (negative once that is past).  Its second is the coming one, or
-  // the one after it (a draw at 80 MHz can end before the tick), or the one that has begun (it is late).
+  // the one after it (a draw that ends before the tick, as with display_power = low), or the one that has begun (it is
+  // late).
   int32_t untilSendUs(time_t sec, int32_t usec) const {
     return (int32_t)(preparedSec_ - sec - 1) * 1000000 + (1000000 - usec) - sendLeadUs();
   }
@@ -178,6 +196,8 @@ class FramePlanner {
   }
 
   int32_t latencyUs_;
+  time_t nowSec_ = 0;  // the clock at the last next()
+  int32_t nowUsec_ = 0;
   bool prepared_ = false;
   bool preparedScheduled_ = false;
   time_t preparedSec_ = 0;

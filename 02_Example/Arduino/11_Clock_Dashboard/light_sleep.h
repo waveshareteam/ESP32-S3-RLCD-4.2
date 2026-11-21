@@ -8,8 +8,10 @@
 // some 9 to 12 mA (Espressif gives 13.2 mA at 40 MHz and nothing lower).  In light sleep it draws about a quarter of a
 // milliamp and keeps its memory and the settings of its peripherals (the display keeps its picture by itself).  So
 // when nothing needs the chip awake, the loop sleeps until the next thing it has to do instead of napping: one sleep
-// a second, from after the draw to just before the send.  The Arduino core has no automatic light sleep
-// (CONFIG_PM_ENABLE is not set), so the loop asks for each one itself.
+// a second, from after the draw to just before the send.  Slow work that is due runs in the same wake, straight
+// after the draw (FramePlanner::quiet() counts the time to the send of the frame just drawn), so it needs no sleep
+// and wake of its own.  The Arduino core has no automatic light sleep (CONFIG_PM_ENABLE is not set), so the loop
+// asks for each one itself.
 //
 // What keeps it awake (decide()):
 //   * the radio, on or about to be: WiFi cannot sleep like this (wifi_mode = always never sleeps);

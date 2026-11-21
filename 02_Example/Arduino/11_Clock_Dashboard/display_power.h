@@ -70,8 +70,9 @@ inline bool rateNeedsWrite(bool inLpm, uint8_t current, bool busy) { return inLp
 // Back to the rate at rest: once the seconds after a press are over (`poked` false), with a frame prepared and the
 // planner quiet (FramePlanner::prepared(), quiet()): the rule the CPU clock goes down by, and a prepared frame.  That
 // frame is then sent by the longer lead and has the time for it: quiet() leaves more than 300 ms before its send at
-// the busy rate, and the rate at rest takes 188 ms of it.  With no frame prepared the draw that comes next might not
-// be over in time at 20 MHz.
+// the busy rate, counted to the send itself, and the rate at rest takes 188 ms of it.  With light sleep that moment
+// is the first wake after the seconds of the press, straight after its draw.  With no frame prepared the draw that
+// comes next might not be over in time at 20 MHz.
 inline bool mayRest(bool busyNow, bool poked, bool prepared, bool quiet) { return busyNow && !poked && prepared && quiet; }
 
 // One step of a switch between the modes: a command without parameters, or the source voltages (VOLTAGES, which

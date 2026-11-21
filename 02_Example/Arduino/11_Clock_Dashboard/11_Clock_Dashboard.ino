@@ -251,11 +251,13 @@ static void poke(uint32_t nowMs) {
 }
 
 // display_power = low: back to 2 Hz once the seconds after a press are over, at a quiet moment with a frame prepared
-// (dispower::mayRest()), so the frame that waits goes out by the longer lead in time.  Called every time round the loop.
+// (dispower::mayRest()), so the frame that waits goes out by the longer lead in time: with light sleep, straight after
+// the draw in the first wake after them.  Called every time round the loop.
 // (With a sweeping second hand nothing is prepared or timed: any moment will do.)
-static void serviceDisplayRate(int32_t usec) {
+static void serviceDisplayRate(const struct timeval &tv) {
   const bool prepared = s_planner.prepared() || CLOCK_SWEEP_FPS > 0;
-  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_pokeUntilMs != 0, prepared, s_planner.quiet(usec))) {
+  const bool quiet = s_planner.quiet(tv.tv_sec, (int32_t)tv.tv_usec);
+  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_pokeUntilMs != 0, prepared, quiet)) {
     applyDisplayPower();
   }
 }
@@ -1428,7 +1430,7 @@ static void serviceConsole(uint32_t nowMs) {
 // startRadio()): the request's number is read first, so a request that comes in while the clock is being set is not
 // answered with the clock set without it; it is answered next time round.  Once answered, the radio keeps the clock
 // up (target()) and the chip awake (lightsleep::decide()) until it is off again.
-static void serviceClock(uint32_t nowMs, int32_t usec) {
+static void serviceClock(uint32_t nowMs, const struct timeval &tv) {
   if (s_pokeUntilMs != 0 && (int32_t)(s_pokeUntilMs - nowMs) <= 0) s_pokeUntilMs = 0;  // over (a time long past must not come round again)
   const uint32_t ask = netRadioClockAsk();
   const bool radio = netRadioNeedsFastClock();
@@ -1447,20 +1449,22 @@ static void serviceClock(uint32_t nowMs, int32_t usec) {
     needs.poked = s_pokeUntilMs != 0;
     want = clockpolicy::target(needs, g_cfg.cpuMhz(), idle);
     s_clockReason = want == idle ? "idle" : (needs.radio ? "radio on" : (needs.usbHost ? "USB attached" : "button"));
-    if (clockpolicy::mayChange((int)getCpuFrequencyMhz(), want, s_planner.quiet(usec))) applyClock(want);
+    const bool quiet = s_planner.quiet(tv.tv_sec, (int32_t)tv.tv_usec);
+    if (clockpolicy::mayChange((int)getCpuFrequencyMhz(), want, quiet)) applyClock(want);
   }
   if (clockpolicy::radioMayStart(radio, (int)getCpuFrequencyMhz(), want, s_clockRefusedMhz)) netRadioClockAnswer(ask);
 }
 
 // Is slow work due (readSlowSensors(), servicePowerLog()), and when can it run: 0 = now, lightsleep::kNever = none is due.
-// Each kind has its part of the second (the sensors while the planner is quiet, after the draw and until 300 ms before
-// the send; the log early in the second), and when it has to wait, the wait is to the tick: the send comes before it.
-static int32_t slowWorkInUs(uint32_t nowMs, int32_t usec) {
+// Each kind has its part of the second: the sensors while the planner is quiet, from the end of the draw (which can be
+// before the tick) until 300 ms before the send of the frame drawn; the log early in the second.  When one has to wait,
+// the wait is to the tick at most: the send comes before it, and the draw straight after the send.
+static int32_t slowWorkInUs(uint32_t nowMs, time_t sec, int32_t usec) {
   const int32_t toTick = 1000000 - usec;
   int32_t in = lightsleep::kNever;
   const bool sensors = s_lastSensorMs == 0 || nowMs - s_lastSensorMs >= SENSOR_INTERVAL_MS;
   const bool battery = s_lastBatMs == 0 || nowMs - s_lastBatMs >= BATTERY_INTERVAL_MS;
-  if (sensors || battery) in = s_planner.quiet(usec) ? 0 : toTick;
+  if (sensors || battery) in = s_planner.quiet(sec, usec) ? 0 : toTick;
   if (powerLogDue((uint32_t)(esp_timer_get_time() / 1000000))) {
     const int32_t at = usec <= powerlog::kLatestStartUs ? 0 : toTick;
     if (at < in) in = at;
@@ -1489,7 +1493,7 @@ static bool lightSleepStep() {
   in.backOff = s_sleepRefusedMs != 0 && (uint32_t)(nowMs - s_sleepRefusedMs) < lightsleep::kRetryMs;
   if (!in.backOff) s_sleepRefusedMs = 0;  // (over: a time long past must not come round again)
   in.frameInUs = s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);
-  in.workInUs = slowWorkInUs(nowMs, (int32_t)tv.tv_usec);
+  in.workInUs = slowWorkInUs(nowMs, tv.tv_sec, (int32_t)tv.tv_usec);
   if (s_toast[0]) {  // the banner comes down then
     const int32_t ms = (int32_t)(s_toastUntilMs - nowMs);
     in.otherInUs = ms <= 0 ? 0 : (ms >= lightsleep::kMaxSleepUs / 1000 ? lightsleep::kMaxSleepUs : ms * 1000);
@@ -1661,8 +1665,8 @@ void loop() {
   gettimeofday(&tv, nullptr);
   watchClock(tv);
   spotifySetPageShown(s_page == PAGE_NOW_PLAYING);  // wifi_mode = sync: the Now Playing page keeps the radio on
-  serviceClock(nowMs, (int32_t)tv.tv_usec);
-  serviceDisplayRate((int32_t)tv.tv_usec);
+  serviceClock(nowMs, tv);
+  serviceDisplayRate(tv);
   if (s_cubeOn) {  // (see cubeFrame)
     cubeFrame(nowMs);
     return;
@@ -1694,8 +1698,8 @@ void loop() {
       if (!lightSleepStep()) delay(step.waitUs > 12000 ? 4 : 1);  // short naps, so the buttons keep being polled
       break;
     default:  // IDLE: the next frame is drawn and its send is far off
-      if (s_planner.quiet((int32_t)tv.tv_usec)) readSlowSensors(nowMs);  // never close to a send
-      servicePowerLog((int32_t)tv.tv_usec);                               // (nor this: only early in a second)
+      if (s_planner.quiet(tv.tv_sec, (int32_t)tv.tv_usec)) readSlowSensors(nowMs);  // never close to a send
+      servicePowerLog((int32_t)tv.tv_usec);                                         // (nor this: only early in a second)
       if (!lightSleepStep()) delay(4);
       break;
   }

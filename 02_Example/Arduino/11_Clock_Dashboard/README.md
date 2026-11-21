@@ -409,7 +409,8 @@ up to about one and a quarter before this change. A clock step (the hourly netwo
 is caught: a frame for a second that is over, or one too far ahead, is dropped and the second it is now drawn at once.
 
 Two things are also kept away from the moment of the send: slow work (the sensor reads, a line of the power log) only
-runs when more than 300 ms are left before it (in practice right after the draw, early in the second), and flash writes
+runs when more than 300 ms are left before it (in practice right after the draw: early in the second, or with
+`display_power = low` just before it, the next send most of a second off), and flash writes
 (saving a time zone or a Spotify token; the flash is only touched when the value changed) wait for the middle of a
 second, because a flash write stops both cores for a while. The WiFi status calls are made before the shared-state lock
 is taken, so a slow WiFi driver cannot hold the UI up.
@@ -845,8 +846,11 @@ few milliseconds; now it sleeps until the next thing is due, and KEY or BOOT wak
 second**, from the end of the draw (and of any slow work after it) to just before the next send. (Until the schedule
 was changed it was two: the draw was left until shortly before the send, so there was a sleep before the draw and a
 short one between the draw and the send, and every sleep costs about 5 ms awake on the way in and out. The new
-schedule has not run on the board either; see [Keeping the seconds on time](#keeping-the-seconds-on-time).) The chip
-keeps its memory and the display its picture. **It is new in 1.11, off by default and has not run on a board yet.**
+schedule has not run on the board either; see [Keeping the seconds on time](#keeping-the-seconds-on-time). With
+`display_power = low` the draw is over before the tick, and the battery and the sensors, when they are due, are read
+straight after it; they used to wait for the tick, in a sleep and a wake of their own every 5 seconds, which made 1.18
+sleeps a second in the simulation where it is now 1.00. Not run on the board either.) The chip keeps its memory and
+the display its picture. **It is new in 1.11, off by default and has not run on a board yet.**
 The Arduino core has no automatic light sleep (`CONFIG_PM_ENABLE` is not set in core 3.3.8), so the clock asks for each
 sleep itself (`light_sleep.h`, `power.cpp`).
 
@@ -973,7 +977,7 @@ that, so that the error is zero on average ([Keeping the seconds on time](#keepi
 power mode it sends them 230 ms earlier still. The seconds then change up to about 250 ms before or after the real
 second instead of 20, and where in that span they land wanders slowly, because the controller refreshes by its own
 oscillator. In a simulation of the loop with the panel's refresh modelled (`tools/tests/test_logic.cpp`) they came out
-5.3 ms late on average, from 250 ms early to 257 late; timed as at 25.5 Hz they would have been 232 ms late on average
+1.9 ms early on average, from 249 ms early to 256 late; timed as at 25.5 Hz they would have been 232 ms late on average
 and up to 487, and timed as at 4 Hz, 124 ms late on average. Up to 1.12 the low power mode ran at 8 Hz, the fastest it
 has, for the seconds' sake: they changed within about 63 ms of the real second, and then at 4 Hz, within about 125 ms.
 It runs at 2 Hz now for the current, by the straight line below some 0.16 mA less than at 4 Hz and 0.47 mA less than
@@ -985,9 +989,10 @@ a press or a page change shows up to 125 ms after it is drawn instead of 500, an
 while it lasts (in the simulation 0.1 ms late on average, 64 either way). It stays at 8 Hz for as long as the
 processor's clock stays fast after a press (`kPokeMs`, 8 seconds), and goes back to 2 Hz at the next quiet moment of
 the frame timing after that, with the next second drawn and its send well ahead, by the same rule the processor's
-clock comes down by. With light sleep that moment comes when the chip wakes for something other than a send: 10.7 s
-after a press on average in the simulation, 14 at most. At a press or two an hour that is well under a minute an hour
-at 8 Hz, which the guess below leaves out. The change is one register, written while the panel stays in the low power
+clock comes down by. With light sleep that moment comes straight after the draw in the first wake after the 8 seconds:
+8.5 s after a press on average in the simulation, 9 at most (it was 10.7 and 14 while a draw over before the tick did
+not count, and the moment waited for a wake for the battery). At a press or two an hour that is well under a minute an
+hour at 8 Hz, which the guess below leaves out. The change is one register, written while the panel stays in the low power
 mode; the datasheet does not say whether it shows at the next refresh or only after the one under way (up to half a
 second at 2 Hz), nor whether it leaves a mark on the picture. **Nobody has seen 2 Hz, or the change to 8 and back, on
 the board**: neither the picture nor the current.

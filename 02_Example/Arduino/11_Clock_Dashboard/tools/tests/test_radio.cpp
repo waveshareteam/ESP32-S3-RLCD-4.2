@@ -2297,6 +2297,25 @@ struct DrawLate : FramePlanner {
     return until >= 0 ? until : FramePlanner::idleUs(sec, usec);
   }
   bool quiet(int32_t usec) const { return !prepared() && 1000000 - usec > kQuietUs; }
+  bool quiet(time_t, int32_t usec) const { return quiet(usec); }
+};
+
+// The rule quiet() had before it counted the time to the prepared frame's own send, for the negative controls: a
+// prepared frame was taken to go out in this second, so after a draw that ended before the tick (display_power = low)
+// slow work and the way down to the idle clock and the rate at rest waited for the tick.
+// (Where the send is more than kSpinUs off the old rule never said yes where the new one says no, so next() only has
+// to turn IDLE into SLEEP.)
+struct QuietByTick : FramePlanner {
+  explicit QuietByTick(int32_t latencyUs) : FramePlanner(latencyUs) {}
+  bool quiet(time_t, int32_t usec) const {
+    const int32_t left = 1000000 - usec;
+    return prepared() ? left - (int32_t)sendCostUs() - latencyUs() > kQuietUs : left > kQuietUs;
+  }
+  Step next(time_t sec, int32_t usec, bool force) {
+    Step st = FramePlanner::next(sec, usec, force);
+    if (st.action == IDLE && !quiet(sec, usec)) st.action = SLEEP;
+    return st;
+  }
 };
 
 // A forced redraw as it was before the faster rate after a press: the second to show by the window alone (2 * cost +
@@ -2317,8 +2336,8 @@ struct WindowOnly : FramePlanner {
 // calibrates the RC clock for some 4 ms, and takes that off the time asked for), and wakes up to 1 ms early or 2 ms
 // late, give or take 0.2 % of its length.  Stalls (a flash write, the radio stack: work of the other core) come at
 // random moments while the chip is awake; while it sleeps the other core sleeps too.  `Plan` is the frame planner, or
-// for the negative controls the schedule it had up to 1.12 (DrawLate, below) or an earlier lead before a send (OldLead,
-// Lead3).  With `busyLatencyUs`, display_power = low with its faster rate after a press: the planner gets that figure
+// for the negative controls the schedule it had up to 1.12 (DrawLate, below), an earlier lead before a send (OldLead,
+// Lead3) or quiet() by the tick (QuietByTick).  With `busyLatencyUs`, display_power = low with its faster rate after a press: the planner gets that figure
 // at the press (poke() in the sketch) and its own back at a quiet moment once kPokeMs are over (serviceDisplayRate()).
 struct SleepLoop {
   bool lightSleep = true;
@@ -2334,6 +2353,7 @@ struct SleepLoop {
   // what came of it
   int frames = 0, late = 0, presses = 0, logLines = 0, sleeps = 0;
   int64_t worstLateUs = 0, worstBatteryGapUs = 0, worstLogLateUs = 0;
+  int64_t closestWorkToSendUs = INT64_MAX;  // from the start of slow work to the send of the frame that waits, at the least
   int64_t worstSendBehindUs = 0;    // how far past its moment a scheduled send began, at worst (0: every one on time)
   lightsleep::Stats napStats;       // the naps, as the firmware counts them
   int64_t wakeToSendUs = 0;         // from the timer's wake-up after a sleep for the send to the send, summed ...
@@ -2435,12 +2455,12 @@ struct SleepLoop {
       time_t sec;
       int32_t usec;
       splitUs(t, &sec, &usec);
-      if (want != mhz && (want > mhz || p.quiet(usec))) {
+      if (want != mhz && (want > mhz || p.quiet(sec, usec))) {
         p.clockChanged((uint32_t)mhz, (uint32_t)want);
         mhz = want;
       }
       // (serviceDisplayRate(): the rate at rest again once kPokeMs are over, at a quiet moment with a frame prepared)
-      if (busy && (restAtOnce ? t >= pokeUntil : dispower::mayRest(busy, t < pokeUntil, p.prepared(), p.quiet(usec)))) {
+      if (busy && (restAtOnce ? t >= pokeUntil : dispower::mayRest(busy, t < pokeUntil, p.prepared(), p.quiet(sec, usec)))) {
         busy = false;
         busyUs += t - busySince;
         if (t - busySince > worstBusyUs) worstBusyUs = t - busySince;
@@ -2502,7 +2522,12 @@ struct SleepLoop {
           napTime = true;
           break;
         default:
-          if (p.quiet(usec)) {  // readSlowSensors()
+          if (p.quiet(sec, usec)) {  // readSlowSensors()
+            const bool due = lastBattery == 0 || t - lastBattery >= 5000000 || lastSensor == 0 || t - lastSensor >= 10000000;
+            if (due && p.prepared()) {  // (how far off the send of the frame that waits is, as it begins)
+              const int64_t toSend = (int64_t)p.preparedSec() * 1000000 - (int64_t)p.sendCostUs() - p.latencyUs() - t;
+              if (toSend < closestWorkToSendUs) closestWorkToSendUs = toSend;
+            }
             if (lastBattery == 0 || t - lastBattery >= 5000000) {
               if (lastBattery && t - lastBattery > worstBatteryGapUs) worstBatteryGapUs = t - lastBattery;
               spend(cost(3000), WORKING);
@@ -2537,7 +2562,7 @@ struct SleepLoop {
         in.frameInUs = p.idleUs(sec, usec);
         const int32_t toTick = 1000000 - usec;
         if (lastBattery == 0 || t - lastBattery >= 5000000 || lastSensor == 0 || t - lastSensor >= 10000000) {
-          in.workInUs = p.quiet(usec) ? 0 : toTick;
+          in.workInUs = p.quiet(sec, usec) ? 0 : toTick;
         }
         if (t >= nextLog) {
           const int32_t at = usec <= 200000 ? 0 : toTick;
@@ -2830,37 +2855,63 @@ void testLightSleepLoop() {
     CHECK(lpm.asleepUs > 0.70 * lpm.totalUs && lpm.asleepUs > hpm.asleepUs - 0.02 * hpm.totalUs);
     CHECK(lpm.skipped == 0 && lpm.twice == 0 && hpm.skipped == 0 && hpm.twice == 0);
   }
+  {  // ... where the draw ends some 130 ms before the tick, with its send most of a second off: the slow work that is due
+     // (the battery every 5 s, the sensors every 10) runs straight after it, in the same wake, so the chip still wakes
+     // once a second, and never within kQuietUs of a send.  The check can fail: with quiet() by the tick (QuietByTick)
+     // it waits for the tick, in a sleep and a wake of its own
+    SleepLoop now, byTick;
+    now.latencyUs = byTick.latencyUs = dispower::latencyUs(true, 20000);
+    now.run(3600, 25);
+    byTick.run<QuietByTick>(3600, 25);
+    const double perSec = now.sleeps / (now.totalUs / 1e6), perSecByTick = byTick.sleeps / (byTick.totalUs / 1e6);
+    printf("  display_power = low, idle clock 20 MHz, an hour: %.2f sleeps a second (%.2f with quiet() by the tick), the chip %.3f mA"
+           " (%.3f); frames late %d of %d (%d); battery read %.1f s apart at worst (%.1f); slow work begun %.0f ms before a send at the"
+           " least (%.0f)\n",
+           perSec, perSecByTick, now.chipMa, byTick.chipMa, now.late, now.frames, byTick.late, now.worstBatteryGapUs / 1e6,
+           byTick.worstBatteryGapUs / 1e6, now.closestWorkToSendUs / 1000.0, byTick.closestWorkToSendUs / 1000.0);
+    CHECK(now.frames > 3600 * 9 / 10 && now.late == 0 && now.worstLateUs <= 30000);
+    CHECK(perSec > 0.95 && perSec < 1.05);
+    CHECK(now.worstBatteryGapUs <= 6500000 && now.logLines >= 3600 / 600 - 1 && now.worstLogLateUs < 1000000);
+    CHECK(now.closestWorkToSendUs > FramePlanner::kQuietUs && now.closestWorkToSendUs < 1000000);
+    CHECK(perSecByTick > 1.1 && byTick.late == 0 && now.chipMa < byTick.chipMa);  // (the check can fail)
+  }
   {  // ... with its 8 Hz for the kPokeMs after a press, a press a minute: the faster figure at the press, the one at rest
      // again at a quiet moment with a frame prepared (dispower::mayRest()) after they are over.  No frame late, every
      // second on the glass once, in order.  The faster rate lasts kPokeMs and the wait for the next quiet moment awake, as
-     // the CPU clock's 80 MHz does by the same rule: with light sleep the chip wakes for the sends, which are never quiet,
-     // and for the battery, read every 5 s at a quiet moment, so at most about 6 s more (10.7 s a press on average here,
-     // 14.0 at most; the bench charges none of it).  The checks can fail: back at rest the moment they are over, frames
-     // are late; and a forced redraw by its window alone (WindowOnly) goes back a second after a press that comes once
-     // the coming second has gone out by the longer lead.
+     // the CPU clock's 80 MHz does by the same rule: with light sleep the chip wakes for the sends, and the moment comes
+     // straight after the draw that follows, so at most about a second more (8.5 s a press on average here, 9.0 at most;
+     // the bench charges none of it).  With quiet() by the tick (QuietByTick) a draw over before the tick was not quiet,
+     // and the moment came with a wake for the battery, read every 5 s: some 6 s more (10.7 and 14.0), which is what
+     // this checked for until the change.  The checks can fail: back at rest the moment they are over, frames are late;
+     // and a forced redraw by its window alone (WindowOnly) goes back a second after a press that comes once the coming
+     // second has gone out by the longer lead.
     const int kPressSec = 60;
-    SleepLoop rate, atOnce, back;
-    rate.latencyUs = atOnce.latencyUs = back.latencyUs = dispower::latencyUs(true, 20000);
-    rate.busyLatencyUs = atOnce.busyLatencyUs = back.busyLatencyUs = dispower::latencyUs(true, 20000, true);
-    rate.pressEverySec = atOnce.pressEverySec = back.pressEverySec = kPressSec;
+    SleepLoop rate, atOnce, back, byTick;
+    rate.latencyUs = atOnce.latencyUs = back.latencyUs = byTick.latencyUs = dispower::latencyUs(true, 20000);
+    rate.busyLatencyUs = atOnce.busyLatencyUs = back.busyLatencyUs = byTick.busyLatencyUs = dispower::latencyUs(true, 20000, true);
+    rate.pressEverySec = atOnce.pressEverySec = back.pressEverySec = byTick.pressEverySec = kPressSec;
     atOnce.restAtOnce = true;
     rate.run(kSeconds, 23);
     atOnce.run(kSeconds, 23);
     back.run<WindowOnly>(kSeconds, 23);
+    byTick.run<QuietByTick>(kSeconds, 23);
     const double busyPerPressS = rate.rateUps ? rate.busyUs / 1e6 / rate.rateUps : 0;
+    const double byTickPerPressS = byTick.rateUps ? byTick.busyUs / 1e6 / byTick.rateUps : 0;
     printf("  display_power = low with 8 Hz after a press, one a minute: %d presses, %d switches up and %d back, %.2f s at 8 Hz a press"
-           " (%.2f at most); frames late %d of %d, worst %.1f ms, %d seconds missed, %d twice or going back; asleep %.1f %%\n",
-           rate.presses, rate.rateUps, rate.rateDowns, busyPerPressS, rate.worstBusyUs / 1e6, rate.late, rate.frames,
-           rate.worstLateUs / 1000.0, rate.skipped, rate.twice, 100.0 * rate.asleepUs / rate.totalUs);
+           " (%.2f at most; %.2f and %.2f with quiet() by the tick); frames late %d of %d, worst %.1f ms, %d seconds missed, %d twice or"
+           " going back; asleep %.1f %%\n",
+           rate.presses, rate.rateUps, rate.rateDowns, busyPerPressS, rate.worstBusyUs / 1e6, byTickPerPressS, byTick.worstBusyUs / 1e6,
+           rate.late, rate.frames, rate.worstLateUs / 1000.0, rate.skipped, rate.twice, 100.0 * rate.asleepUs / rate.totalUs);
     printf("    back at rest the moment kPokeMs are over: frames late %d, worst %.1f ms; the redraw by its window alone: %d twice or"
            " going back\n",
            atOnce.late, atOnce.worstLateUs / 1000.0, back.twice);
     CHECK(rate.presses > kSeconds / kPressSec / 2 && rate.rateUps == rate.presses && rate.rateDowns >= rate.rateUps - 1);
     CHECK(rate.frames > kSeconds * 9 / 10 && rate.late == 0 && rate.worstLateUs <= 30000);
     CHECK(rate.skipped == 0 && rate.twice == 0);
-    CHECK(busyPerPressS > clockpolicy::kPokeMs / 1000.0 && rate.worstBusyUs < (clockpolicy::kPokeMs + 6500) * 1000LL);
+    CHECK(busyPerPressS > clockpolicy::kPokeMs / 1000.0 && rate.worstBusyUs < (clockpolicy::kPokeMs + 1500) * 1000LL);
     CHECK(rate.asleepUs > 0.70 * rate.totalUs);
     CHECK(atOnce.late > 10 && back.twice > 10);  // (the checks can fail)
+    CHECK(byTickPerPressS > busyPerPressS + 1.5 && byTick.worstBusyUs > (clockpolicy::kPokeMs + 3000) * 1000LL && byTick.late == 0);
   }
 }
 

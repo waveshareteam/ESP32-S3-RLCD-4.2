@@ -1205,13 +1205,77 @@ static void testFramePlan() {
   {  // quiet(): slow work only with plenty of time before the send (after 1.12 also while a frame waits for it, which
      // it now does for most of a second: until then nothing was quiet while one was prepared)
     P p(20000);
-    CHECK(p.quiet(100000));
-    CHECK(!p.quiet(800000));  // nothing prepared: 200 ms to the tick
+    CHECK(p.quiet(99, 100000));
+    CHECK(!p.quiet(99, 800000));  // nothing prepared: 200 ms to the tick
     p.drew(100, 30000, true);
-    CHECK(p.quiet(100000) && p.quiet(600000));     // sent 35 ms before the tick: 865 and 365 ms away
-    CHECK(!p.quiet(700000) && !p.quiet(990000));  // 265 ms away, and (at 80 MHz, the draw over before the tick) to the tick
+    CHECK(p.quiet(99, 100000) && p.quiet(99, 600000));     // sent 35 ms before the tick: 865 and 365 ms away
+    CHECK(!p.quiet(99, 700000) && !p.quiet(99, 990000));  // 265 ms away, and past the send's moment
     p.sent(15000);
-    CHECK(p.quiet(100000));
+    CHECK(p.quiet(99, 100000));
+  }
+  {  // ... counted to the send of the frame that waits, whichever second it is for.  For the coming second the answers
+     // are what they were when a prepared frame was taken to go out in this second (the rule up to the change), at 80
+     // and 20 MHz in both display modes; for the second after it (a draw over before the tick: at 80 MHz, and at 20
+     // with display_power = low) it is quiet straight after the draw, where the old rule waited for the tick, and stops
+     // being so kQuietUs before the send
+    for (int mhz : {80, 20}) {
+      for (bool low : {false, true}) {
+        P p(dispower::latencyUs(low, 20000));
+        if (mhz == 20) p.clockChanged(80, 20);
+        p.drew(100, 30000 * 80 / mhz, false);
+        p.sent(15000 * 80 / mhz);  // second 100 is on the glass
+        p.drew(101, 30000 * 80 / mhz, true);
+        const int32_t lead = (int32_t)p.sendCostUs() + p.latencyUs();
+        int differ = 0;
+        for (int32_t usec = 0; usec < 1000000; usec += 1000) differ += p.quiet(100, usec) != (1000000 - usec - lead > P::kQuietUs);
+        CHECK(differ == 0);
+        // the next one: 101 sent `lead` before its tick, 102 drawn after it (a draw of 30 ms at 80 MHz, 120 at 20)
+        const int32_t drawEnd = 1000000 - lead + (int32_t)p.sendCostUs() + 30000 * 80 / mhz;
+        CHECK(p.next(100, 1000000 - lead, false).action == P::SEND);
+        p.sent(15000 * 80 / mhz);
+        CHECK(p.next(100, 1000000 - lead + (int32_t)p.sendCostUs(), false).action == P::PREPARE);
+        p.drew(102, 30000 * 80 / mhz, true);
+        const bool before = drawEnd < 1000000;  // the draw is over before the tick
+        printf("  %d MHz, display_power = %s: the send %d ms before the tick, the draw over %d ms %s it\n", mhz, low ? "low" : "normal",
+               (int)(lead / 1000), (int)((before ? 1000000 - drawEnd : drawEnd - 1000000) / 1000), before ? "before" : "after");
+        CHECK(before == low);  // (the panel's 2 Hz: the send goes out a quarter of a second earlier)
+        if (before) {
+          CHECK(p.quiet(100, drawEnd) && !(1000000 - drawEnd - lead > P::kQuietUs));  // (the old rule: not quiet)
+          CHECK(p.next(100, drawEnd, false).action == P::IDLE);
+        }
+        CHECK(p.quiet(101, 1000000 - lead - P::kQuietUs - 1) && !p.quiet(101, 1000000 - lead - P::kQuietUs));
+        CHECK(!p.quiet(101, 1000000 - lead) && p.idleUs(101, 1000000 - lead - P::kQuietUs) == P::kQuietUs);
+      }
+    }
+  }
+  {  // ... the one-argument form takes the second from the last next(), and the one after it once the tick has passed
+     // since, with no next() in between; a frame for a second that is over, or one more than two ahead, is never
+     // quiet (where the old rule was for a late one, by the time left in its second)
+    P p(dispower::latencyUs(true, 20000));
+    p.clockChanged(80, 20);
+    p.drew(100, 120000, false);
+    p.sent(60000);
+    p.drew(101, 120000, true);
+    CHECK(p.next(100, 600000, false).action == P::SLEEP);  // (the send 90 ms off)
+    p.sent(60000);  // (as if sent at its moment)
+    p.drew(102, 120000, true);
+    CHECK(p.next(100, 870000, false).action == P::IDLE);
+    const int32_t until = 1000000 - (int32_t)p.sendCostUs() - p.latencyUs() - P::kQuietUs;  // (quiet in 101 up to 390 ms)
+    int differ = 0, quietOnes = 0;
+    for (int32_t usec = 870000; usec < 1000000; usec += 1000) differ += p.quiet(usec) != p.quiet(100, usec);  // before the tick
+    for (int32_t usec = 0; usec < 870000; usec += 1000) {  // after it
+      differ += p.quiet(usec) != p.quiet(101, usec);
+      quietOnes += p.quiet(usec);
+    }
+    CHECK(differ == 0 && quietOnes == (until + 999) / 1000 && p.quiet(until - 1) && !p.quiet(until) && until / 1000 == 389);
+    P late(20000);
+    CHECK(late.next(100, 500000, false).action == P::DRAW_NOW);  // (no frame yet)
+    late.drew(100, 30000, true);  // the frame for the second that has begun: due at once, never quiet
+    CHECK(!late.quiet(100, 500000) && !late.quiet(500000) && 500000 - 35000 > P::kQuietUs);
+    CHECK(!late.quiet(101, 100000) && late.next(100, 500000, false).action == P::SEND);
+    P ahead(20000);
+    ahead.drew(104, 30000, true);  // more than two seconds ahead: next() drops it
+    CHECK(!ahead.quiet(101, 100000) && ahead.quiet(102, 100000));
   }
   {  // the decisions at a few moments, with the default costs (send lead 35 ms).  After 1.12 the next second is drawn
      // straight after a send, a second ahead, where it used to wait until 125 ms before its tick
@@ -1231,8 +1295,8 @@ static void testFramePlan() {
     s = p.next(500, 980000, false);  // 501 is out: the one after it, straight away
     CHECK(s.action == P::PREPARE && s.sec == 502);
     p.drew(502, 30000, true);
-    s = p.next(500, 995000, false);  // drawn before the tick (as at 80 MHz): due in a second and 5 ms less the lead
-    CHECK(s.action == P::SLEEP && s.waitUs == 970000);
+    s = p.next(500, 995000, false);  // drawn before the tick (as with display_power = low): due in a second and 5 ms less
+    CHECK(s.action == P::IDLE && s.waitUs == 970000);  // the lead, so slow work may run (it used to wait for the tick)
     s = p.next(501, 10000, false);  // the second has begun and it was shown: slow work, the send 955 ms away
     CHECK(s.action == P::IDLE && s.waitUs == 955000);
     CHECK(p.idleUs(501, 10000) == 955000 - P::kWakeLeadUs && p.idleUs(500, 995000) == 970000 - P::kWakeLeadUs);
@@ -1279,8 +1343,8 @@ static void testFramePlan() {
     r.drew(501, 30000, false);
     r.sent(15000);  // 501 went out 35 ms before its tick ...
     r.drew(502, 30000, true);  // ... and 502 is drawn before it
-    s = r.next(500, 990000, false);
-    CHECK(s.action == P::SLEEP && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 975000 - P::kWakeLeadUs);
+    s = r.next(500, 990000, false);  // (quiet: its send is 975 ms off, where it used to wait for the tick)
+    CHECK(s.action == P::IDLE && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 975000 - P::kWakeLeadUs);
     s = r.next(499, 990000, false);  // back by a second
     CHECK(!r.prepared() && s.action == P::DRAW_NOW && s.sec == 499);
     P f(20000);

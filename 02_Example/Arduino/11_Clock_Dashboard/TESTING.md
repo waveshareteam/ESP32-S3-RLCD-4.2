@@ -120,7 +120,7 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
       with `normal`, nothing else changed (each is a restart): the difference is what it saves. The guess is about
       1.3 mA; nothing published says more, so anything from nothing to 2 mA would not be a surprise. The *Power and
       settings* page should have a *Display* row saying `low power mode, 8 Hz refresh` just after the press that turned
-      to it, and `low power mode, 2 Hz refresh` some ten seconds later (at most about 14).
+      to it, and `low power mode, 2 Hz refresh` eight or nine seconds later (at most about 9).
     * The picture at 2 refreshes a second next to 25.5: contrast and legibility in daylight and in lamp light, and
       from the side; no flicker or shimmer, no smearing of the seconds, no ghost of the digits before.
     * The seconds against a reference (a phone's clock with seconds, or a radio time signal), with no button touched
@@ -129,7 +129,7 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
     * Buttons and page changes still feel immediate: the panel goes to 8 Hz with the press, so up to 125 ms before
       they show, as up to 1.12. A press that takes up to half a second to show means the new rate waits for the slow
       refresh under way.
-    * The change of rate itself: no flash, jump or change of contrast at a press, or about ten seconds after it when
+    * The change of rate itself: no flash, jump or change of contrast at a press, or eight or nine seconds after it when
       the rate goes back to 2 Hz (watch the *Display* row change). For the seconds after a press they should be within
       about a sixteenth of a second of the reference.
     * The cubes: they run in the high power mode, so they should look as smooth as with `normal`; starting one takes
