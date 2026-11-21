@@ -197,10 +197,10 @@ const Def kDefs[] = {
     {"light_sleep", "lsleep", T_BOOL, OFF(lightSleep), 0, 0, 0, nullptr, false, "Power",
      "on or off.  On: between the frames, once a second, the processor goes into light sleep instead\n"
      "of idling, whenever nothing needs it: the radio off (wifi = off, or between the syncs of the\n"
-     "sync mode), the console shut down (console = auto or off), no button pressed for 8 seconds.\n"
-     "KEY and BOOT wake it at once.  While it sleeps its clock runs on an RC oscillator in the chip,\n"
-     "less exact than the crystal: the hourly network time puts it right, and without WiFi nothing\n"
-     "does.  Not yet tried on the board; see the README."},
+     "sync mode), the console shut down (console = auto or off), no button down or a click still\n"
+     "being timed.  KEY and BOOT wake it at once.  While it sleeps its clock runs on an RC\n"
+     "oscillator in the chip, less exact than the crystal: the hourly network time puts it right,\n"
+     "and without WiFi nothing does.  Not yet tried on the board; see the README."},
     {"display_power", "dpower", T_ENUM, OFF(displayPower), 0, 0, 0, kDisplayPowerNames, false, "Power",
      "normal or low: how the display's controller drives the panel.  Low is its low power mode,\n"
      "which refreshes the panel 8 times a second instead of 25.5: less current (how much has not\n"

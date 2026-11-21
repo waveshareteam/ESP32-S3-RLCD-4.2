@@ -137,7 +137,7 @@ The last column is the name the same setting has in `config.h` / `secrets.h`, se
 | `cpu_idle_mhz` | `off`, `80`, `40` or `20`: the CPU clock while the radio is off (`wifi = off`, or between the syncs of `wifi_mode = sync`); see [The idle clock](#the-idle-clock). **Not yet tried on the board** (`off`) | `CPU_IDLE_MHZ` (`0` = off) |
 | `console` | `on`, `auto` or `off`: the USB serial console (the log and the commands). `auto` runs it only while a computer is on the USB port, `off` not at all; shut down, it takes the USB port with it. See [The console](#the-console). **Not yet tried on the board** (`on`) | `CONSOLE_MODE` |
 | `power_log` | `on` / `off`. On: the clock writes its power readings into its own flash, one line at each start and every ten minutes, and copies the log to an SD card that is in the slot while it starts; see [The clock's own log](#the-clocks-own-log). The first time, the FAT partition of the flash is formatted. **Not yet tried on the board** (`off`) | `POWER_LOG` (`1` / `0`) |
-| `light_sleep` | `on` / `off`. On: between the frames the processor goes into light sleep instead of idling, whenever the radio is off, the console is shut down and no button has been pressed for 8 seconds; KEY and BOOT wake it. Its clock is less exact while it sleeps: keep `wifi_mode = sync` so the network time puts it right. See [Light sleep](#light-sleep). **Not yet tried on the board** (`off`) | `LIGHT_SLEEP` (`1` / `0`) |
+| `light_sleep` | `on` / `off`. On: between the frames the processor goes into light sleep instead of idling, whenever the radio is off, the console is shut down and no button is down or still being read as a click; KEY and BOOT wake it. Its clock is less exact while it sleeps: keep `wifi_mode = sync` so the network time puts it right. See [Light sleep](#light-sleep). **Not yet tried on the board** (`off`) | `LIGHT_SLEEP` (`1` / `0`) |
 | `display_power` | `normal` / `low`. Low: the display's controller refreshes the panel 8 times a second instead of 25.5 (its low power mode), for less current. A frame then shows up 0 to 125 ms after it is sent instead of 0 to 39; the frame timing allows for that, so the seconds change up to about 63 ms early or late instead of 20. How much it saves has not been measured. See [The display's low power mode](#the-displays-low-power-mode). **Not yet tried on the board** (`normal`) | `DISPLAY_POWER` |
 | `weather_interval_min` | Minutes between weather updates, 5 to 240 (`15`) | `WEATHER_INTERVAL_MIN` |
 
@@ -855,10 +855,22 @@ sleep itself (`light_sleep.h`, `power.cpp`).
 | --- | --- |
 | the radio, on or about to be | WiFi cannot sleep like this. So with `wifi_mode = always` it never sleeps; with `sync` it sleeps between the sessions, with `wifi = off` all the time |
 | the USB console | in light sleep the chip lets go of its USB port, so a computer would lose the clock every second, and one plugged in later would not find it. `console = auto` (the console goes 10 seconds after start-up without a computer) or `off`; a start with KEY held keeps the console, and with it the chip awake |
-| a button that is down, pressed in the last 8 seconds, or pressed while the loop was busy and not answered yet | the clock times the clicks, and whoever pressed is waiting for the answer |
-| a redraw that is due, the cube, a restart | |
+| a button that is down, a click that is still being timed (the 0.32 seconds after it that tell a single click from a double), or a press that came while the loop was busy and is not answered yet | the clock times the clicks, and whoever pressed is waiting for the answer |
+| a redraw that is due, the cube, a restart, a press the network task has not taken yet | the network task counts its waits in the system's ticks, which stand still while the chip sleeps, so it could hear of a press seconds late (see below) |
 | slow work that is due (the sensors, the battery, a line of the power log) | it runs first; if it has to wait for its part of the second, the sleep ends where that part begins |
 | the next frame, a banner to take down | the sleep ends 2 ms before them (and 0.2 % of its length more), so the loop finds things as it would have without it; the one before a send is aimed 3 ms ahead of it |
+
+**After a button press** the chip used to stay awake for 8 seconds, the time the idle clock stays at the working clock
+(see [The idle clock](#the-idle-clock)). Now it is awake only while the press is being read and answered: while the
+button is down, for the 25 ms of debounce and the 0.32 seconds after a click that tell it from a double click, while the
+answer is drawn, and until the network task has taken the press (one or two of its passes, 0.1 to 0.2 seconds). The
+clock still stays at the working clock for the 8 seconds, so the frames after a press are drawn as fast as before, but
+the chip sleeps between them. That saves some 7 seconds awake at 80 MHz a press, about 0.04 mAh; with a press an hour,
+about 0.04 mA on average (a model's figure, which counts a press as a moment and not as the third of a second it takes
+to read, so the real saving is a little smaller). There is nothing to save after KEY with `wifi_mode = sync`: the radio
+comes on for 45 seconds and keeps the chip awake anyway. One thing comes later than before: a banner that the network
+task raises just after it switched the radio off (*Spotify: no WiFi in range* after KEY with no network about) can come
+up to a second late, at the next frame. **Not run on the board.**
 
 **The guard and the lead.** The 2 ms and the 0.2 % cover the latest wake-up in the simulation (2 ms late, give or take
 0.2 % of the sleep), and the 3 ms before a send let a board that wakes up to 3 ms later than that still send on time;
@@ -874,16 +886,18 @@ of the time, so the idle clock is nearly all of the energy. By the
 radio off) the chip idles at 13.2 mA at 40 MHz and 22.0 at 80, works at 16.2 and 28.4, and draws **0.24 mA in light
 sleep**; Espressif gives nothing below 40 MHz, so 20 MHz is drawn out along the same line (8.8 mA idle). A simulation of
 the loop (`tools/tests/test_radio.cpp`: the frames, the slow work, the power log, a press every ten minutes, a radio
-session every quarter of an hour; the sleep's way in and out costs 5 ms) gives, with one sleep a second (0.98 a
-second over the run; the old schedule had 2.02):
+session every quarter of an hour; the sleep's way in and out costs 5 ms) gives, with one sleep a second (1.00 a
+second over the run; the old schedule had 2.05):
 
 | `cpu_idle_mhz` | Asleep | The chip, without light sleep | with it |
 | --- | --- | --- | --- |
-| 20 | 79 % of the time | 9.3 mA | 2.6 mA (2.7 with two sleeps a second) |
-| 40 | 88 % | 13.7 mA | 2.3 mA (2.5) |
-| 80 (`off`) | 92 % | 22.3 mA | 2.3 mA (2.6) |
+| 20 | 80 % of the time | 9.3 mA | 2.3 mA (2.4 with two sleeps a second) |
+| 40 | 89 % | 13.7 mA | 2.0 mA (2.2) |
+| 80 (`off`) | 94 % | 22.3 mA | 2.0 mA (2.3) |
 
-So with the owner's settings the chip should draw about 6.7 mA less at 3.3 V. The board turns the 5 V of USB into
+(With the chip kept awake for the 8 seconds after every press, as up to 1.12, it was 79, 88 and 92 % asleep and
+2.6, 2.3 and 2.3 mA: a press every ten minutes is far more than most clocks get, so the real difference is smaller.)
+So with the owner's settings the chip should draw about 7 mA less at 3.3 V. The board turns the 5 V of USB into
 3.3 V (the charger's power path, then the buck-boost converter); at a guessed 85 % that is **about 5 mA less at 5 V:
 from 21.2 mA to about 16**. The owner's own two readings point a little higher: 80 MHz against 20 MHz differ by 7.8 mA
 at 5 V, where the datasheet's straight line says 10, which would mean the chip at 20 MHz draws more than 8.8 mA, and then
@@ -910,8 +924,8 @@ the crystal. In the simulation the time of day stays within 2 ms of that.)
 
 **How to see it working.** The *Power and settings* page has a **Sleep** row while `light_sleep` is on: `78.5 % of the
 time` (the share since the start), and when it is awake for a reason worth saying, which: `(now: radio on)`,
-`(now: console on)`, `(now: button pressed)` (for 8 seconds after any press, the one that brought you to the page
-included), `(now: busy)`, `(now: SDK refused)` (the SDK would not sleep; the clock tries again a second later). The
+`(now: console on)`, `(now: button pressed)` (while a button is down or a click is still being read, so the frame
+drawn for the press that brought you to the page says it), `(now: busy)`, `(now: SDK refused)` (the SDK would not sleep; the clock tries again a second later). The
 [power log](#the-clocks-own-log) has the same share in its `asleep_pct` column. (`power` in the serial console prints
 the row too, with counts of the naps and how much later than asked a nap woke at worst, but in a run with the console
 on they are all 0: the console keeps the chip awake.)

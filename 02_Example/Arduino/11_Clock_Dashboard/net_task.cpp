@@ -14,6 +14,7 @@
 #include "calc.h"
 #include "config.h"
 #include "drift.h"
+#include "light_sleep.h"
 #include "log.h"
 #include "power.h"
 #include "radio_plan.h"
@@ -37,6 +38,8 @@ volatile bool s_weatherNow = false;
 std::atomic<uint32_t> s_demandUntilMs{0};  // wifi_mode = sync: a key press holds the radio on until then (netWake); 0 = none
 std::atomic<uint32_t> s_demandSeq{1};      // ... and counts up with every press, so that one press buys one attempt (radio_plan.h)
 std::atomic<bool> s_lookNow{false};        // a button was pressed: a clock that found no network looks again now (netNudge)
+lightsleep::Handoff s_asked;               // a netWake() or netNudge() this task has not acted on yet (netAskPending)
+volatile bool s_taskRuns = false;          // the task was started (not with wifi = off)
 std::atomic<bool> s_radioNeedsFast{false};  // the radio is on or about to be: the CPU clock must stay at 80 MHz or more
 // The radio asks the UI loop for the fast clock and waits for the answer before it comes on (clock_policy.h,
 // radioMayStart()): every request is a new number, and the loop answers with the number it has seen.
@@ -476,6 +479,7 @@ void netTask(void *) {
   };
 
   for (;;) {
+    s_asked.passBegins();  // (light sleep: a press waits for this task until the pass that sees it is over)
     const uint32_t now = millis();
 
     if (g_powerDown) {  // on the way to deep sleep: no new WiFi calls while the UI task switches the radio off
@@ -785,6 +789,7 @@ void netBegin() {
     return;
   }
   s_radioNeedsFast = true;  // until the network task knows better (the first session, or no radio at all)
+  s_taskRuns = true;
   xTaskCreatePinnedToCore(netTask, "net", 16384, nullptr, 1, nullptr, 0);
 }
 
@@ -799,9 +804,15 @@ void netRequestWeatherRefresh() { s_weatherNow = true; }
 void netWake() {
   s_demandSeq.fetch_add(1);
   s_demandUntilMs.store(radioplan::demandUntil(millis()));
+  s_asked.ask();  // (after the wish itself: the pass that sees this sees the wish)
 }
 
-void netNudge() { s_lookNow.store(true); }
+void netNudge() {
+  s_lookNow.store(true);
+  s_asked.ask();
+}
+
+bool netAskPending() { return s_taskRuns && s_asked.pending(); }
 
 bool netRadioNeedsFastClock() { return s_radioNeedsFast.load(); }
 

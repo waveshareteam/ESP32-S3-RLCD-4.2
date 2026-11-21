@@ -1453,10 +1453,12 @@ static bool lightSleepStep() {
   in.enabled = true;
   in.radio = netRadioNeedsFastClock();
   in.console = g_consoleOn;
-  // (a change the interrupts recorded while the loop was busy counts too: pollButtons() takes it next time round)
-  in.button = digitalRead(PIN_KEY) == LOW || digitalRead(PIN_BOOT) == LOW || s_key.isDown() || s_boot.isDown() || buttonEdgesPending();
-  in.poked = s_pokeUntilMs != 0;
-  in.busy = s_forceRedraw || s_restartAsked || s_cubeOn;
+  // (a change the interrupts recorded while the loop was busy counts too: pollButtons() takes it next time round; and
+  // so does a gesture that is still being timed, as only the loop sees its gap end)
+  in.button = digitalRead(PIN_KEY) == LOW || digitalRead(PIN_BOOT) == LOW || s_key.isDown() || s_boot.isDown() || s_key.pending() ||
+              s_boot.pending() || buttonEdgesPending();
+  in.poked = s_pokeUntilMs != 0;  // (keeps nothing awake: only the CPU clock follows it, serviceClock())
+  in.busy = s_forceRedraw || s_restartAsked || s_cubeOn || netAskPending();
   in.backOff = s_sleepRefusedMs != 0 && (uint32_t)(nowMs - s_sleepRefusedMs) < lightsleep::kRetryMs;
   if (!in.backOff) s_sleepRefusedMs = 0;  // (over: a time long past must not come round again)
   in.frameInUs = s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);

@@ -73,6 +73,11 @@ class ClickDetector {
   // of the last update.
   bool isDown() const { return stable_; }
   uint32_t heldMs() const { return stable_ ? (uint32_t)(lastMs_ - pressStartMs_) : 0; }
+  // A gesture is still being timed, by the time of the last update: a change of the level waits out the
+  // debounce, or clicks wait out `multiClickGapMs` before they are reported.  The loop has to keep looking
+  // until it is over (light_sleep.h): asleep, it would not see the gap end, and the click would wait for
+  // the next wake-up.
+  bool pending() const { return raw_ != stable_ || clicks_ > 0; }
 
  private:
   uint32_t gapMs_, longMs_, debounceMs_;
@@ -122,7 +127,9 @@ class HoldRelease {
 // count (muted()): each one's long press comes due long before the two together do, a hold that acts on
 // letting go would act, and two buttons let go are not two clicks.  The quiet time is for the click that a
 // detector reports a moment after its button came up.  Feed it the debounced states of the two
-// ClickDetectors (isDown()).
+// ClickDetectors (isDown()).  The quiet time needs nobody to look while it runs out (light_sleep.h): it
+// ends at the first update() after it is over, and the first look after the detectors were at rest (none
+// down, none pending()) never reports a gesture, so none can come before that update.
 class ChordHold {
  public:
   enum Event : uint8_t { NONE = 0, FIRED };

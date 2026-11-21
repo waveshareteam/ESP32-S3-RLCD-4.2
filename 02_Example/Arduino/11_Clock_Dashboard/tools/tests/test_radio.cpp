@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "buttons.h"
 #include "check.h"
 #include "clock_policy.h"
 #include "console_policy.h"
@@ -1714,7 +1715,6 @@ void testLightSleepDecide() {
   with("radio", RADIO, [](Inputs &i) { i.radio = true; });
   with("console", CONSOLE, [](Inputs &i) { i.console = true; });
   with("button down", BUTTON, [](Inputs &i) { i.button = true; });
-  with("poke window", BUTTON, [](Inputs &i) { i.poked = true; });
   with("busy", BUSY, [](Inputs &i) { i.busy = true; });
   with("refused a moment ago", REFUSED, [](Inputs &i) { i.backOff = true; });
   with("work that can run now", WORK, [](Inputs &i) { i.workInUs = 0; });
@@ -1728,6 +1728,14 @@ void testLightSleepDecide() {
     if (d.sleep || d.why != c.why) printf("  %s: sleep %d, why %d (wanted %d)\n", c.what, d.sleep, (int)d.why, (int)c.why);
     CHECK(!d.sleep && d.why == c.why);
   }
+  // the poke window (a press in the last kPokeMs) keeps only the CPU clock up: on its own it sleeps as long as with
+  // nothing at all (up to 1.12 it kept the chip awake, BUTTON)
+  {
+    Inputs poked = base;
+    poked.poked = true;
+    const Decision d = decide(poked);
+    CHECK(d.sleep && d.why == ASLEEP && d.us == decide(base).us);
+  }
   // when there are several, the first of: off, radio, console, button, busy, refused, work, soon
   {
     Inputs all = base;
@@ -1738,7 +1746,7 @@ void testLightSleepDecide() {
     CHECK(decide(all).why == CONSOLE);
     all.console = false;
     CHECK(decide(all).why == BUTTON);
-    all.button = all.poked = false;
+    all.button = false;  // (poked is still set: it does not come into it)
     CHECK(decide(all).why == BUSY);
     all.busy = false;
     CHECK(decide(all).why == REFUSED);
@@ -1851,6 +1859,127 @@ void testLightSleepDecide() {
     formatRow(312, REFUSED, row);
     CHECK_STR(row, "31.2 % of the time (now: SDK refused)");
   }
+}
+
+// One tap of KEY (90 ms, from `downMs`) with light sleep on, the way the sketch takes it (pollButtons(), handleKey(),
+// lightSleepStep()): awake, the loop looks at the button every 4 ms; a light sleep lasts as long as decide() says
+// unless the press ends it; the frame on every second and the redraw after the click take 45 ms awake.  The network
+// task's passes come every 100 ms of the time awake, from `netPhaseMs` on, as FreeRTOS's ticks stand still while the
+// chip sleeps.  The click asks the network task for the radio (netWake(), Handoff), and the first pass after that
+// switches it on.  The controls leave out what the sketch gives decide() beyond the button that is down: the gesture
+// still being timed (ClickDetector::pending()) and the wish that waits for the network task.
+struct TapRun {
+  int64_t clickAfterUpMs = -1;     // from the end of the tap to CLICK_1 (-1: none)
+  int64_t radioAfterClickMs = -1;  // from CLICK_1 to the radio on (-1: not within the run)
+};
+TapRun runTap(uint32_t downMs, uint32_t netPhaseMs, bool withPending, bool withHandoff) {
+  ClickDetector det(320, 800, 25);
+  lightsleep::Handoff asked;
+  TapRun r;
+  const uint32_t upMs = downMs + 90;
+  uint32_t t = 0, nextFrame = 1000, netAwakeMs = 0, nextPassMs = netPhaseMs;
+  int64_t clickAt = -1;
+  bool redraw = false, radio = false;
+  auto awake = [&](uint32_t ms) {
+    for (uint32_t i = 0; i < ms; i++) {
+      t++;
+      if (++netAwakeMs < nextPassMs) continue;
+      nextPassMs += 100;
+      asked.passBegins();
+      if (clickAt >= 0 && !radio) {  // (the pass sees the wish)
+        radio = true;
+        r.radioAfterClickMs = t - clickAt;
+      }
+    }
+  };
+  while (t < 8000 && !radio) {
+    if (t >= nextFrame) {  // the send, and the next frame drawn
+      awake(45);
+      nextFrame += 1000;
+      continue;
+    }
+    const bool level = t >= downMs && t < upMs;
+    if (det.update(level, t) == CLICK_1 && clickAt < 0) {
+      clickAt = t;
+      r.clickAfterUpMs = t - upMs;
+      asked.ask();
+      redraw = true;
+    }
+    if (redraw) {  // the answer, drawn
+      awake(45);
+      redraw = false;
+      continue;
+    }
+    lightsleep::Inputs in;
+    in.enabled = true;
+    in.radio = radio;
+    in.button = level || det.isDown() || (withPending && det.pending());
+    in.poked = t >= downMs && t < upMs + clockpolicy::kPokeMs;  // (it changes nothing)
+    in.busy = withHandoff && asked.pending();
+    in.frameInUs = (int32_t)(nextFrame - t) * 1000;
+    const lightsleep::Decision d = lightsleep::decide(in);
+    if (!d.sleep) {
+      awake(4);
+      continue;
+    }
+    uint32_t wake = t + (uint32_t)(d.us / 1000);
+    if (t < downMs && wake > downMs) wake = downMs + 1;  // KEY ends it
+    t = wake;  // (no ticks meanwhile)
+  }
+  return r;
+}
+
+void testLightSleepTap() {
+  section("light sleep: a tap of KEY, and the network task");
+  {  // the hand-off on its own: pending from ask() until the second pass that begins after it
+    lightsleep::Handoff h;
+    CHECK(!h.pending());
+    h.passBegins();
+    CHECK(!h.pending());
+    h.ask();
+    CHECK(h.pending());
+    h.passBegins();  // the pass that sees it ...
+    CHECK(h.pending());
+    h.passBegins();  // ... is over
+    CHECK(!h.pending());
+    h.ask();  // two, the second while that pass runs: it may have looked already, so the next one is the one that sees it
+    h.passBegins();
+    h.ask();
+    h.passBegins();
+    CHECK(h.pending());
+    h.passBegins();
+    CHECK(!h.pending());
+  }
+  // the debounce and the gap, a frame (45 ms) that may come in between, and the loop's looks every 4 ms
+  const int64_t clickBoundMs = 25 + 320 + 45 + 3 * 4;
+  struct Worst {
+    int runs = 0, unheard = 0, noRadio = 0;
+    int64_t clickMs = 0, radioMs = 0;
+  };
+  auto sweep = [&](bool withPending, bool withHandoff) {
+    Worst w;
+    for (uint32_t down = 1100; down < 2100; down += 37) {
+      for (uint32_t phase = 0; phase < 100; phase += 11) {
+        const TapRun r = runTap(down, phase, withPending, withHandoff);
+        w.runs++;
+        if (r.clickAfterUpMs < 0) w.unheard++;
+        if (r.radioAfterClickMs < 0) w.noRadio++;
+        w.clickMs = std::max(w.clickMs, r.clickAfterUpMs);
+        w.radioMs = std::max(w.radioMs, r.radioAfterClickMs);
+      }
+    }
+    return w;
+  };
+  const Worst all = sweep(true, true), noPending = sweep(false, true), noHandoff = sweep(true, false);
+  printf("  %d taps: the click %lld ms after the tap at worst (%lld without pending()), the radio %lld ms after the click (%lld"
+         " without the hand-off)\n",
+         all.runs, (long long)all.clickMs, (long long)noPending.clickMs, (long long)all.radioMs, (long long)noHandoff.radioMs);
+  CHECK(all.runs > 200 && all.unheard == 0 && all.noRadio == 0);
+  CHECK(all.clickMs <= clickBoundMs && all.radioMs <= 101);
+  // the checks can fail: asleep while the gap runs out, the click waits for the next frame; asleep while the wish
+  // waits, the network task's pass comes in the time awake of the frames after it
+  CHECK(noPending.unheard == 0 && noPending.clickMs > 600);
+  CHECK(noHandoff.noRadio == 0 && noHandoff.radioMs > 500);
 }
 
 // After the light sleep before a send (decide() on FramePlanner::idleUs()), waking at the earliest or the latest
@@ -2178,7 +2307,8 @@ struct SleepLoop {
   int64_t wakeToSendUs = 0;         // from the timer's wake-up after a sleep for the send to the send, summed ...
   int wakeToSends = 0;              // ... over this many
   int64_t worstBannerUs = 0;        // from the moment a banner should come down to the redraw, the worst ...
-  int64_t worstBannerIdleUs = -1;   // ... of those that came down with no button pressed for a while (light sleep in play)
+  int64_t worstBannerIdleUs = -1;   // ... of those that came down more than kPokeMs after a press (the idle clock)
+  int64_t pokedUs = 0, asleepPokedUs = 0;  // the time within kPokeMs of a press (the CPU clock up), and how much of it asleep
   int64_t worstPressUs = 0;         // from a press to the loop taking it, the worst of all
   int64_t worstPressAsleepUs = -1;  // ... of those that came while the chip slept (-1: none did)
   int64_t asleepUs = 0, workUs = 0, idleUs = 0, totalUs = 0;
@@ -2206,6 +2336,7 @@ struct SleepLoop {
     enum Kind { WORKING, IDLE, ASLEEP };
     auto spend = [&](int64_t us, Kind kind) {
       if (us <= 0) return;
+      const int64_t from = t;
       // A stall freezes the loop (a flash write, the radio stack) wherever it happens while the chip is awake.  (Up to
       // 1.12 one that fell due in a sleep came at its start and made it end that much late, as if the time asleep were
       // awake: that put a stall at every sleep's start with a chance that grew with the sleep, which is not how it
@@ -2229,6 +2360,10 @@ struct SleepLoop {
         asleepUs += us;
         charge += (double)us * 0.24;
       }
+      if (from < pokeUntil) {
+        pokedUs += t - from;
+        if (kind == ASLEEP) asleepPokedUs += us;
+      }
     };
     auto cost = [&](double us80) { return (int64_t)(us80 * 80.0 / mhz * (0.9 + 0.2 * r.uni())); };
     auto radioOn = [&](int64_t at) { return ((at - start) / 1000000) % 900 < 6; };  // a 6 s session every 15 min
@@ -2239,7 +2374,7 @@ struct SleepLoop {
         if (pressWokeIt && after > worstPressAsleepUs) worstPressAsleepUs = after;
         pressWokeIt = false;
         presses++;
-        pokeUntil = t + 8000000;
+        pokeUntil = t + clockpolicy::kPokeMs * 1000LL;
         force = true;
         bannerUntil = t + 2200000;
         nextPress = t + (int64_t)(pressEverySec * (0.5 + r.uni()) * 1e6);
@@ -2376,6 +2511,17 @@ struct SleepLoop {
   }
 };
 
+// The rule up to 1.12, to compare with: the kPokeMs after a press (Inputs::poked) kept the chip awake as well.
+lightsleep::Decision decidePokeAwake(const lightsleep::Inputs &in) {
+  lightsleep::Decision d = lightsleep::decide(in);
+  if (in.enabled && !in.radio && !in.console && in.poked) {
+    d.sleep = false;
+    d.us = 0;
+    d.why = lightsleep::BUTTON;
+  }
+  return d;
+}
+
 // The old guard, to compare with: every sleep ended 5 ms and 1/128 of its length early.
 lightsleep::Decision decideOldGuard(const lightsleep::Inputs &in) {
   lightsleep::Decision d = lightsleep::decide(in);
@@ -2508,6 +2654,22 @@ void testLightSleepLoop() {
     CHECK(on.worstPressUs < 45000 * 1.1 * 80 / mhz + 10000);  // ... and otherwise a press waits for a frame at most
     CHECK(on.worstBannerIdleUs >= 0 && on.worstBannerIdleUs < 6000);  // a banner comes down on time (the sleep ends before)
     CHECK(on.chipMa < off.chipMa * 0.5);
+    // the kPokeMs after a press keep the CPU clock up and the chip no longer awake: asleep for most of them, where it
+    // was never asleep with the rule up to 1.12; frames, presses and banners on time as above (a banner within a frame
+    // at 80 MHz, as a press)
+    SleepLoop pokeAwake;
+    pokeAwake.idleMhz = mhz;
+    pokeAwake.decide = decidePokeAwake;
+    pokeAwake.run(kSeconds, 21);
+    printf("    the %u s after a press: asleep %.1f %% of them (%.1f %% with the rule up to 1.12); banners down %.1f ms late at worst"
+           " (%.1f); the chip %.2f mA (%.2f)\n",
+           (unsigned)(clockpolicy::kPokeMs / 1000), 100.0 * on.asleepPokedUs / on.pokedUs, 100.0 * pokeAwake.asleepPokedUs / pokeAwake.pokedUs,
+           on.worstBannerUs / 1000.0, pokeAwake.worstBannerUs / 1000.0, on.chipMa, pokeAwake.chipMa);
+    CHECK(on.pokedUs > (int64_t)on.presses * 7000000 && on.asleepPokedUs > 0.6 * on.pokedUs);
+    CHECK(pokeAwake.presses > 10 && pokeAwake.pokedUs > 0 && pokeAwake.asleepPokedUs == 0);  // (the check can fail)
+    CHECK(on.late == 0 && on.worstLateUs <= 30000);
+    CHECK(on.worstBannerUs < 45000 * 1.1 + 10000);
+    CHECK(on.chipMa < pokeAwake.chipMa);
   }
   {  // stalls of 20 to 300 ms every 8 s awake on average: no more late frames than without light sleep, and a press
      // every half a minute: taken as soon as without it
@@ -3176,6 +3338,7 @@ int main() {
   testFramePlanClock();
   testFramePlanIdle();
   testLightSleepDecide();
+  testLightSleepTap();
   testLightSleepWake();
   testNapSteps();
   testWallFix();

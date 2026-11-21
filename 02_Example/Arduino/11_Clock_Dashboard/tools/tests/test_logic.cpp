@@ -1953,6 +1953,74 @@ static void testButtons() {
   CHECK(e == CLICK_1);
 }
 
+// Whether a gesture is still being timed (pending()): with light sleep on, that and a button that is down (isDown())
+// are what keep the loop looking (light_sleep.h).  Looked at every 5 ms, from 1000 on.
+template <class Level>
+static void pendingRun(Level level, uint32_t endMs, std::vector<bool> *pend, std::vector<bool> *down, std::vector<ClickEvent> *ev) {
+  ClickDetector d(320, 800, 25);
+  CHECK(!d.pending() && !d.isDown());  // (at rest, before the first look)
+  for (uint32_t t = 1000; t <= endMs; t += 5) {
+    ev->push_back(d.update(level(t), t));
+    pend->push_back(d.pending());
+    down->push_back(d.isDown());
+  }
+}
+
+static void testButtonPending() {
+  section("buttons: a gesture still being timed");
+  std::vector<bool> pend, down;
+  std::vector<ClickEvent> ev;
+  auto at = [](uint32_t t) { return (t - 1000) / 5; };  // the look at time t
+  auto from = [&](uint32_t a, uint32_t b, bool wantPending, bool wantDown) {  // every look in [a, b)
+    int wrong = 0;
+    for (uint32_t t = a; t < b; t += 5) wrong += pend[at(t)] != wantPending || down[at(t)] != wantDown;
+    return wrong;
+  };
+  {  // a tap from 1100 to 1180: the press's debounce, held down, the release's debounce, the gap; reported at 1525
+    pendingRun([](uint32_t t) { return t >= 1100 && t < 1180; }, 3000, &pend, &down, &ev);
+    CHECK(ev[at(1525)] == CLICK_1);
+    CHECK(from(1000, 1100, false, false) == 0);  // at rest
+    CHECK(from(1100, 1125, true, false) == 0);   // the press waits out the debounce
+    CHECK(from(1125, 1180, false, true) == 0);   // down (isDown() keeps the loop looking)
+    CHECK(from(1180, 1205, true, true) == 0);    // the release waits out the debounce
+    CHECK(from(1205, 1525, true, false) == 0);   // up, and the click waits out the gap
+    CHECK(from(1525, 3000, false, false) == 0);  // reported: nothing more
+  }
+  pend.clear();
+  down.clear();
+  ev.clear();
+  {  // a double click: still being timed across the gap between the two clicks, and until CLICK_2
+    pendingRun([](uint32_t t) { return (t >= 1100 && t < 1160) || (t >= 1260 && t < 1320); }, 3000, &pend, &down, &ev);
+    CHECK(ev[at(1665)] == CLICK_2);
+    CHECK(from(1125, 1160, false, true) == 0);   // the first press, down
+    CHECK(from(1185, 1260, true, false) == 0);   // between the two clicks
+    CHECK(from(1285, 1320, true, true) == 0);    // the second press, down, with a click counted
+    CHECK(from(1345, 1665, true, false) == 0);
+    CHECK(from(1665, 3000, false, false) == 0);
+  }
+  pend.clear();
+  down.clear();
+  ev.clear();
+  {  // a long press: reported while down; let go, only the release's debounce, and nothing after
+    pendingRun([](uint32_t t) { return t >= 1100 && t < 2500; }, 4000, &pend, &down, &ev);
+    CHECK(ev[at(1925)] == CLICK_LONG);
+    CHECK(from(1125, 2500, false, true) == 0);
+    CHECK(from(2500, 2525, true, true) == 0);
+    CHECK(from(2525, 4000, false, false) == 0);
+    int after = 0;
+    for (uint32_t t = 1930; t <= 4000; t += 5) after += ev[at(t)] != CLICK_NONE;
+    CHECK(after == 0);
+  }
+  pend.clear();
+  down.clear();
+  ev.clear();
+  {  // a glitch shorter than the debounce: timed while it lasts, then nothing
+    pendingRun([](uint32_t t) { return t >= 1100 && t < 1115; }, 2000, &pend, &down, &ev);
+    CHECK(from(1100, 1115, true, false) == 0);
+    CHECK(from(1115, 2000, false, false) == 0);
+  }
+}
+
 // A loop that is busy part of the time, as the UI loop is while it draws a frame: `busyMs` out of every second,
 // from `phaseMs` on, it does not look at the pin; otherwise every 5 ms.  With `edges` every change of the pin is
 // also recorded with its time, as the interrupt of button_edges.cpp does (16 places, the rest is dropped), and
@@ -2200,9 +2268,13 @@ struct Pad {
   int armed = 0, restarts = 0, cubes = 0, ends = 0;
   int shoved = 0, switched = 0;  // what the cube was given while it was up: KEY's clicks, BOOT's clicks
   uint32_t cubeAt = 0;
+  std::vector<std::pair<uint32_t, int>> log;  // all of it, with its time: 10 + KEY's gesture, 20 + BOOT's, 30 the cube,
+                                              // 40 the restart armed, 41 fired
+  uint32_t now_ = 0;
 
   // A gesture of KEY or BOOT: to the cube while it is up (a long press ends it), else to the button's own handler.
   void gesture(bool isKey, ClickEvent e) {
+    log.push_back({now_, (isKey ? 10 : 20) + e});
     if (!cubeOn) {
       if (isKey) {
         (e == CLICK_LONG ? keyLongs : keyClicks)++;
@@ -2218,6 +2290,7 @@ struct Pad {
   }
 
   void poll(bool k, bool b, uint32_t now) {
+    now_ = now;
     const bool muted = both.muted();
     const ClickEvent ek = key.update(k, now), eb = boot.update(b, now);
     if (ek != CLICK_NONE && !muted) gesture(true, ek);
@@ -2226,14 +2299,15 @@ struct Pad {
       cubeOn = true;
       cubes++;
       cubeAt = now;
+      log.push_back({now, 30});
     }
     if (both.muted()) {
       restart.cancel();
       return;
     }
     switch (restart.update(key.isDown(), key.heldMs())) {
-      case HoldRelease::ARMED: armed++; break;
-      case HoldRelease::FIRED: restarts++; break;
+      case HoldRelease::ARMED: armed++; log.push_back({now, 40}); break;
+      case HoldRelease::FIRED: restarts++; log.push_back({now, 41}); break;
       default: break;
     }
   }
@@ -2242,6 +2316,17 @@ struct Pad {
   template <class K, class B>
   void run(uint32_t *t, uint32_t t0, uint32_t ms, K keyDown, B bootDown) {
     for (const uint32_t end = *t + ms; (int32_t)(end - *t) > 0; *t += 4) poll(keyDown(*t - t0), bootDown(*t - t0), *t);
+  }
+  // The same, looked at as the loop looks with light sleep on (light_sleep.h): every 4 ms while a button is down, a
+  // gesture is still being timed (pending(); left out for the negative control) or the cube is up, and otherwise only
+  // as a button goes down (that wakes the chip) and once a second (a frame).  Not while the chord's quiet time runs out.
+  template <class K, class B>
+  void runAsleep(uint32_t *t, uint32_t t0, uint32_t ms, K keyDown, B bootDown, bool withPending = true) {
+    for (const uint32_t end = *t + ms; (int32_t)(end - *t) > 0; *t += 4) {
+      const bool k = keyDown(*t - t0), b = bootDown(*t - t0);
+      const bool timing = withPending && (key.pending() || boot.pending());
+      if (k || b || key.isDown() || boot.isDown() || timing || cubeOn || (*t - t0) % 1000 == 0) poll(k, b, *t);
+    }
   }
   int events() const { return keyClicks + keyLongs + bootClicks + bootLongs; }
 };
@@ -2358,6 +2443,56 @@ static void testChord() {
     h.cancel();
     CHECK(!h.armed() && h.update(false, 0) == HoldRelease::NONE);  // let go after a cancel: nothing fires
   }
+}
+
+// The pads again, looked at only while something is being timed, as with light sleep on (Pad::runAsleep): every
+// gesture, restart and cube comes at the same moment as with a look every 4 ms, also when the chord's quiet time runs
+// out unwatched.  Without pending() (the negative control) a click waits for the next frame.
+static void testButtonsAsleep() {
+  section("buttons: looked at only while a gesture is being timed (light sleep)");
+  int runs = 0, same = 0, taps = 0, tapsHeard = 0, sameWithout = 0;
+  int32_t worstLateWithout = 0;
+  auto compare = [&](uint32_t ms, auto key, auto boot, bool tap) {
+    for (uint32_t t0 : {0u, 0xFFFFE000u}) {  // (the second: across the wrap of millis())
+      Pad a, b, c;
+      uint32_t ta = t0, tb = t0, tc = t0;
+      a.run(&ta, t0, ms, key, boot);
+      b.runAsleep(&tb, t0, ms, key, boot);
+      c.runAsleep(&tc, t0, ms, key, boot, false);
+      runs++;
+      if (a.log == b.log) same++;
+      if (a.log == c.log) sameWithout++;
+      if (!tap) continue;
+      taps++;
+      if (a.log.size() == 1 && c.log.size() == 1) {
+        tapsHeard++;
+        worstLateWithout = std::max(worstLateWithout, (int32_t)(c.log[0].first - a.log[0].first));
+      }
+    }
+  };
+  auto never = [](uint32_t) { return false; };
+  for (uint32_t s = 1000; s < 2000; s += 37) {  // a tap of KEY and a double click of BOOT, at every moment of a second
+    compare(4000, [s](uint32_t x) { return x >= s && x < s + 90; }, never, true);
+    compare(4000, never, [s](uint32_t x) { return (x >= s && x < s + 70) || (x >= s + 170 && x < s + 240); }, true);
+  }
+  compare(4000, never, [](uint32_t x) { return x >= 1000 && x < 2500; }, false);  // a long press of BOOT
+  compare(9000, [](uint32_t x) { return x >= 1000 && x < 6500; }, never, false);  // KEY held for 5.5 s: the restart
+  for (uint32_t d = 0; d <= 1200; d += 20) {  // both tapped together, then KEY tapped as the quiet time runs out
+    compare(4000, [d](uint32_t x) { return (x >= 1000 && x < 1100) || (x >= 1100 + d && x < 1190 + d); },
+            [](uint32_t x) { return x >= 1010 && x < 1100; }, false);
+  }
+  for (uint32_t d = 0; d <= 1200; d += 40) {  // both held for 2 s (neither long press counts), then BOOT tapped
+    compare(5000, [](uint32_t x) { return x >= 1000 && x < 3000; },
+            [d](uint32_t x) { return (x >= 1020 && x < 3000) || (x >= 3000 + d && x < 3090 + d); }, false);
+  }
+  // both held for 10.5 s: the cube; BOOT tapped for the other cube, a long press of KEY ends it, then KEY tapped
+  compare(20000, [](uint32_t x) { return (x >= 1000 && x < 11500) || (x >= 14000 && x < 16000) || (x >= 17000 && x < 17090); },
+          [](uint32_t x) { return (x >= 1000 && x < 11500) || (x >= 12500 && x < 12590); }, false);
+  printf("  %d of %d runs as with a look every 4 ms; without pending() %d, and a click up to %d ms later\n", same, runs, sameWithout,
+         (int)worstLateWithout);
+  CHECK(runs > 200 && same == runs);
+  CHECK(taps > 100 && tapsHeard == taps && worstLateWithout > 500);  // (the check can fail)
+  CHECK(sameWithout < runs / 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -2780,9 +2915,11 @@ int main() {
   testUtil();
   testLinkPage();
   testButtons();
+  testButtonPending();
   testButtonEdges();
   testHoldRelease();
   testChord();
+  testButtonsAsleep();
   testInfinityCube();
   testSandCube();
   printf("\n%d checks, %d failed\n", g_checks, g_failed);

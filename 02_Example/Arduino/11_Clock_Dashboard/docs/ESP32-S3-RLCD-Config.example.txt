@@ -178,10 +178,10 @@
 #
 # on or off.  On: between the frames, once a second, the processor goes into light sleep instead
 # of idling, whenever nothing needs it: the radio off (wifi = off, or between the syncs of the
-# sync mode), the console shut down (console = auto or off), no button pressed for 8 seconds.
-# KEY and BOOT wake it at once.  While it sleeps its clock runs on an RC oscillator in the chip,
-# less exact than the crystal: the hourly network time puts it right, and without WiFi nothing
-# does.  Not yet tried on the board; see the README.
+# sync mode), the console shut down (console = auto or off), no button down or a click still
+# being timed.  KEY and BOOT wake it at once.  While it sleeps its clock runs on an RC
+# oscillator in the chip, less exact than the crystal: the hourly network time puts it right,
+# and without WiFi nothing does.  Not yet tried on the board; see the README.
 # light_sleep = off
 #
 # normal or low: how the display's controller drives the panel.  Low is its low power mode,

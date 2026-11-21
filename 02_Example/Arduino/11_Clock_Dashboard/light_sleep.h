@@ -15,10 +15,13 @@
 //   * the radio, on or about to be: WiFi cannot sleep like this (wifi_mode = always never sleeps);
 //   * the USB console: in light sleep the chip lets go of its USB port, so a computer on it would lose the clock
 //     every second, and one plugged in later would not find it (console = auto or off shut the console down);
-//   * a button that is down, or was pressed in the last 8 seconds (clockpolicy::kPokeMs), or a change of one that
-//     the interrupts recorded and the loop has not taken yet: the loop times the gestures, and whoever pressed is
-//     waiting for the answer;
-//   * anything else that keeps the loop busy: a redraw that is due, the cube, a restart;
+//   * a button that is down, a gesture that is still being timed (the debounce, the gap after a click before it is
+//     reported: ClickDetector::pending()), or a change of one that the interrupts recorded and the loop has not taken
+//     yet.  Once the gesture has been reported and its answer drawn, it sleeps again between the frames: the 8 seconds
+//     after a press (clockpolicy::kPokeMs) keep only the CPU clock up, so that the frames after a press are drawn
+//     as fast as before (up to 1.12 they kept the chip awake as well);
+//   * anything else that keeps the loop busy: a redraw that is due, the cube, a restart, a press that the network
+//     task has not acted on yet (Handoff, below);
 //   * slow work that is due (the sensors, the battery, a line of the power log) and can run now; when it has to
 //     wait for its part of the second, the sleep ends where that part begins;
 //   * a sleep the SDK refused less than kRetryMs ago (every try costs the calibration);
@@ -45,12 +48,15 @@
 // music on the Now Playing page) would turn into a jump.  WallFix puts that part back, so the time awake is counted
 // by the crystal as before.
 //
-// Pure logic with no Arduino dependency: the decision, the steps of one nap against a small interface (napOnce();
-// power.cpp has the one with the real SDK calls), the correction of the time of day, the share of the time asleep
-// and the row of the Power and settings page.  tools/tests/test_radio.cpp runs all of it on a PC.
+// Pure logic with no Arduino dependency: the decision, the hand-off to the network task, the steps of one nap against
+// a small interface (napOnce(); power.cpp has the one with the real SDK calls), the correction of the time of day, the
+// share of the time asleep and the row of the Power and settings page.  tools/tests/test_radio.cpp runs all of it on a
+// PC.
 
 #include <stdint.h>
 #include <stdio.h>
+
+#include <atomic>
 
 namespace lightsleep {
 
@@ -68,8 +74,8 @@ enum Why : uint8_t {
   OFF,         // light_sleep = off
   RADIO,       // the radio is on, or about to be
   CONSOLE,     // the USB console runs
-  BUTTON,      // a button is down, or was pressed a moment ago
-  BUSY,        // the loop has something else to do (a redraw, the cube, a restart)
+  BUTTON,      // a button is down, or its gesture is still being timed
+  BUSY,        // the loop has something else to do (a redraw, the cube, a restart, a press for the network task)
   WORK,        // slow work is due and can run now
   SOON,        // the next thing is too close to be worth a sleep
   REFUSED,     // the SDK would not sleep (the last try came back with an error)
@@ -80,9 +86,12 @@ struct Inputs {
   bool enabled = false;        // light_sleep = on
   bool radio = false;          // netRadioNeedsFastClock()
   bool console = false;        // the USB console runs (g_consoleOn)
-  bool button = false;         // KEY or BOOT is down (the pins, the click detectors), or a change of one waits in the record
-  bool poked = false;          // a button was pressed in the last kPokeMs
-  bool busy = false;           // a redraw is due, the cube is up, a restart is asked for
+  bool button = false;         // KEY or BOOT is down (the pins, the click detectors), a gesture is still being timed
+                               // (ClickDetector::pending()), or a change of one waits in the record
+  bool poked = false;          // a button was pressed in the last kPokeMs: keeps nothing awake (only the CPU clock
+                               // follows it, clock_policy.h)
+  bool busy = false;           // a redraw is due, the cube is up, a restart is asked for, a press waits for the network
+                               // task (Handoff)
   bool backOff = false;        // the SDK refused a sleep less than kRetryMs ago
   int32_t frameInUs = 0;       // until the frame planner's next step (FramePlanner::idleUs())
   int32_t workInUs = kNever;   // until due slow work can run: 0 = now, kNever = none is due
@@ -102,7 +111,7 @@ inline Decision decide(const Inputs &in) {
     d.why = RADIO;
   } else if (in.console) {
     d.why = CONSOLE;
-  } else if (in.button || in.poked) {
+  } else if (in.button) {  // (not in.poked: see the top)
     d.why = BUTTON;
   } else if (in.busy) {
     d.why = BUSY;
@@ -126,6 +135,27 @@ inline Decision decide(const Inputs &in) {
   }
   return d;
 }
+
+// A wish handed from the UI loop to the network task: a key press that wants the radio (netWake()), a button that
+// asks it to look for a network now (netNudge()).  That task works in passes paced by FreeRTOS's ticks, and the tick
+// count stands still while the chip sleeps (with no automatic light sleep the SDK does not put it forward), so a pass
+// due 100 ms later could come seconds later, and the radio with it.  So a wish keeps the chip awake (Inputs::busy)
+// from ask() until the second pass that begins after it: the first one sees it (it was stored before ask()), and by
+// the time the next one begins the first has acted on it (the radio is on, which keeps the chip awake by itself, or
+// there was nothing to do).  ask() from any task, passBegins() from the network task at the top of every pass.
+class Handoff {
+ public:
+  void ask() { asked_.fetch_add(1); }
+  void passBegins() {
+    done_.store(seen_);  // what the pass before this one saw, it has acted on
+    seen_ = asked_.load();
+  }
+  bool pending() const { return asked_.load() != done_.load(); }
+
+ private:
+  std::atomic<uint32_t> asked_{0}, done_{0};
+  uint32_t seen_ = 0;  // (the network task's own)
+};
 
 // The time of day after a nap.  `wallBefore` and `monoBefore` are the time of day and the chip's timer just before,
 // `wallAfter` and `monoAfter` just after, all in microseconds.  The timer was put forward by the time asleep, so the

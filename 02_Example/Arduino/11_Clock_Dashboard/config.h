@@ -262,9 +262,10 @@
 
 // 1 = between the frames, once a second, the processor goes into light sleep instead of idling, whenever nothing needs
 // it awake: the radio off (WIFI_ENABLED 0, or between the syncs of WIFI_MODE "sync"), the console shut down
-// (CONSOLE_MODE "auto" or "off"), no button pressed for 8 seconds.  KEY and BOOT wake it at once.  While it sleeps its
-// clock runs on an RC oscillator inside the chip, calibrated before every sleep but less exact than the crystal: the
-// hourly network time puts it right, and without WiFi nothing does.  Not yet tried on the board (README: "Light sleep").
+// (CONSOLE_MODE "auto" or "off"), no button down or a click still being timed.  KEY and BOOT wake it at once.  While
+// it sleeps its clock runs on an RC oscillator inside the chip, calibrated before every sleep but less exact than the
+// crystal: the hourly network time puts it right, and without WiFi nothing does.  Not yet tried on the board (README:
+// "Light sleep").
 #ifndef LIGHT_SLEEP
 #define LIGHT_SLEEP 0
 #endif

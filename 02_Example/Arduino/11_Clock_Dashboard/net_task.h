@@ -29,6 +29,11 @@ void netWake();
 // Does nothing when the clock has a network, or in always mode.  Any task may call it.
 void netNudge();
 
+// True from a netWake() or netNudge() until the network task has acted on it: with light sleep on the chip stays
+// awake meanwhile, since the task's passes would otherwise wait for it to wake (light_sleep.h, Handoff).  Always
+// false when the task was never started (wifi = off).
+bool netAskPending();
+
 // True while the radio is on or about to be: the CPU clock must not go below 80 MHz then (clock_policy.h).
 bool netRadioNeedsFastClock();
 
