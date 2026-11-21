@@ -233,19 +233,20 @@ static void handleBoot(ClickEvent e) {
   s_forceRedraw = true;
 }
 
-// display_power: how the controller drives the panel (its low power mode at 1 Hz, 8 Hz while a button was pressed a
-// moment ago, or the high one at 25.5 Hz, display_power.h), and the frame timing that goes with it.  The cube runs in
-// the high power mode whatever the setting: it sends frames as fast as it can draw them, and 8 a second would make it
-// judder.  A switch takes 120 ms into the low power mode and 320 ms out of it (the datasheet's waits); a change of the
-// low one's rate is one command.  The faster rate comes at once with a press (poke()), the slower one back only at a
-// moment that leaves the frame that waits the time for its longer lead (serviceDisplayRate()).
+// display_power: how the controller drives the panel (its low power mode at display_low_hz, 2 Hz unless set, and 8 Hz
+// while a button was pressed a moment ago, or the high one at 25.5 Hz, display_power.h), and the frame timing that goes
+// with it, for the rate in force.  The cube runs in the high power mode whatever the setting: it sends frames as fast
+// as it can draw them, and 8 a second would make it judder.  A switch takes 120 ms into the low power mode and 320 ms
+// out of it (the datasheet's waits); a change of the low one's rate is one command.  The faster rate comes at once
+// with a press (poke()), the slower one back only at a moment that leaves the frame that waits the time for its longer
+// lead (serviceDisplayRate()).
 static void applyDisplayPower() {
   if (!s_lcd) return;
   const bool low = g_cfg.displayPower == DISPPOWER_LOW && !s_cubeOn;
   const bool busy = low && s_busyUntilMs != 0;
   s_lcd->setLowPower(low);
-  s_lcd->setLowRate(busy);
-  s_planner.setLatencyUs(dispower::latencyUs(low, DISPLAY_LATENCY_MS * 1000, busy));
+  s_lcd->setLowRate(busy, g_cfg.displayLowHz);
+  s_planner.setLatencyUs(dispower::latencyUs(low, DISPLAY_LATENCY_MS * 1000, busy, g_cfg.displayLowHz));
 }
 
 // A button is down, or was a moment ago: the CPU clock is at the working clock (cpu_mhz) for clockpolicy::pokeMs()
@@ -257,9 +258,10 @@ static void poke(uint32_t nowMs) {
   if (s_lcd && s_lcd->lowPower() && !s_lcd->lowRateBusy()) applyDisplayPower();
 }
 
-// display_power = low: back to 1 Hz once the seconds after a press are over, with a frame prepared whose send is more
-// than the longer lead's extra 437.5 ms off (dispower::mayRest()), so it still goes out by that lead in time: with light
-// sleep, straight after the draw in the first wake after them.  Called every time round the loop, after
+// display_power = low: back to the rate at rest (display_low_hz) once the seconds after a press are over, with a frame
+// prepared whose send is more than the longer lead's extra off (dispower::restLeadGrowUs(): 187.5 ms at 2 Hz, 437.5 at
+// 1; dispower::mayRest()), so it still goes out by that lead in time: with light sleep, straight after the draw in the
+// first wake after them.  (At 8 Hz there is no other rate to go back to.)  Called every time round the loop, after
 // serviceClock(), so the send cost of a CPU clock that has just come down is in the planner's wait.
 // (With a sweeping second hand nothing is prepared or timed: any moment will do.)
 static void serviceDisplayRate(uint32_t nowMs, const struct timeval &tv) {
@@ -267,7 +269,7 @@ static void serviceDisplayRate(uint32_t nowMs, const struct timeval &tv) {
   const bool sweep = CLOCK_SWEEP_FPS > 0;
   const bool prepared = s_planner.prepared() || sweep;
   const int32_t idleUs = sweep ? INT32_MAX : s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);  // (the send's wait and the lag)
-  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_busyUntilMs != 0, prepared, idleUs)) {
+  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_busyUntilMs != 0, prepared, idleUs, g_cfg.displayLowHz)) {
     applyDisplayPower();
   }
 }
@@ -812,12 +814,15 @@ static void buildInfoPower(UiModel &m, const SharedState &s) {
   }
   add("Shutdown", v);
   // display_power = low: say so, whether the panel is in it now, and at which rate (8 Hz for the seconds after a
-  // button press, so on a page just turned to; 1 Hz once they are over).  (On a page with room for it and the three
-  // rows below: on the fullest page, with the PSRAM warning and the log's two rows, it is the one left out.)
+  // button press, so on a page just turned to; display_low_hz once they are over).  (On a page with room for it and the
+  // three rows below: on the fullest page, with the PSRAM warning and the log's two rows, it is the one left out.)
   if (g_cfg.displayPower == DISPPOWER_LOW && n < UI_INFO_LINES - 3 - spare) {
-    add("Display", !(s_lcd && s_lcd->lowPower()) ? "low power mode chosen, not in it"
-                   : s_lcd->lowRateBusy()        ? "low power mode, 8 Hz refresh"
-                                                 : "low power mode, 1 Hz refresh");
+    if (!(s_lcd && s_lcd->lowPower())) {
+      add("Display", "low power mode chosen, not in it");
+    } else {
+      snprintf(v, sizeof v, "low power mode, %d Hz refresh", s_lcd->lowRateBusy() ? 8 : (int)g_cfg.displayLowHz);
+      add("Display", v);
+    }
   }
 
   // (a line holds 42 characters of value)
@@ -1268,11 +1273,17 @@ static void serviceSerial() {
                       buttonEdgesOn() ? "read by interrupt as well (idle clock or light sleep)" : "read by the loop",
                       s_audioStandby < 0 ? "left alone (AUDIO_CHIPS_STANDBY 0)"
                                          : (s_audioStandby == (AUDIO_CODEC_ANSWERED | AUDIO_MIC_ADC_ANSWERED) ? "both powered down" : "not both answered (see the start of the log)"));
-        Serial.printf("display: %s; frames timed for %d ms on the way to the glass\n",
-                      !(s_lcd && s_lcd->lowPower()) ? "high power mode, 25.5 Hz"
-                      : s_lcd->lowRateBusy()        ? "low power mode, 8 Hz after a button press (display_power = low; 1 Hz at rest)"
-                                                    : "low power mode, 1 Hz (display_power = low; 8 Hz after a button press)",
-                      (int)(s_planner.latencyUs() / 1000));
+        char disp[128];
+        if (!(s_lcd && s_lcd->lowPower())) {
+          snprintf(disp, sizeof disp, "high power mode, 25.5 Hz");
+        } else if (s_lcd->lowRateBusy()) {
+          snprintf(disp, sizeof disp, "low power mode, 8 Hz after a button press (display_power = low; %d Hz at rest, display_low_hz)",
+                   (int)g_cfg.displayLowHz);
+        } else {
+          snprintf(disp, sizeof disp, "low power mode, %d Hz (display_power = low, display_low_hz = %d; 8 Hz after a button press)",
+                   (int)g_cfg.displayLowHz, (int)g_cfg.displayLowHz);
+        }
+        Serial.printf("display: %s; frames timed for %d ms on the way to the glass\n", disp, (int)(s_planner.latencyUs() / 1000));
         if (g_cfg.lightSleep) {  // (with the console on these stay at 0: the console keeps the chip awake)
           char row[lightsleep::kRow];
           lightsleep::formatRow(s_sleepStats.permille(esp_timer_get_time()), s_sleepWhy, row);

@@ -38,4 +38,5 @@
     "power_log = on\n"
     "light_sleep = on\n"
     "display_power = low\n"
+    "display_low_hz = 1\n"
     "weather_interval_min = 30\n";

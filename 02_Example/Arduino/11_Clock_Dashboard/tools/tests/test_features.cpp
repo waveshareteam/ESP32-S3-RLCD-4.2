@@ -14,6 +14,7 @@
 #include "calc.h"
 #include "check.h"
 #include "datefmt.h"
+#include "display_power.h"
 #include "drift.h"
 #include "fw_logic.h"
 #include "low_battery.h"
@@ -86,7 +87,7 @@ std::string dump(const Settings &s) {
 void testSettingsTable() {
   section("settings table");
   const size_t n = settingCount();
-  CHECK(n == 34);
+  CHECK(n == 35);
   CHECK(n <= 64);  // userSet is a 64 bit mask
   CHECK_STR(settingKey(n), "");
   CHECK_STR(settingNvsKey(n), "");
@@ -177,6 +178,55 @@ void testSettingsRoundTrip() {
       CHECK(a.r.problems() == 1 && a.s.displayPower == DISPPOWER_NORMAL);
     }
     CHECK(fmt(all.s, idx("display_power")) == "low" && fmt(Settings(), idx("display_power")) == "normal");
+  }
+  {  // ... and what a clock saved that had display_power but not yet display_low_hz: that one at its default, 2 Hz
+    Settings old;
+    for (size_t i = 0; i < settingCount(); i++) {
+      if (!strcmp(settingKey(i), "display_low_hz")) continue;
+      CHECK(applyStoredSetting(old, i, fmt(all.s, i).c_str()));
+    }
+    CHECK(old.displayLowHz == 2 && !settingIsUserSet(old, idx("display_low_hz")));
+    CHECK(old.displayPower == DISPPOWER_LOW && settingIsUserSet(old, idx("display_power")));
+    CHECK(old.userSet == (uint64_t)(((1ull << settingCount()) - 1) & ~(1ull << idx("display_low_hz"))));
+  }
+  // display_low_hz: the low power mode's rate at rest, 1, 2, 4 or 8, kept as the rate itself; 2 by default, the
+  // display's own default (display_power.h, which the sketch hands the setting to as it is)
+  CHECK(Settings().displayLowHz == dispower::kLowHzDefault && all.s.displayLowHz == 1);
+  CHECK_STR(settingNvsKey(idx("display_low_hz")), "dlowhz");
+  CHECK(fmt(Settings(), idx("display_low_hz")) == "2" && fmt(all.s, idx("display_low_hz")) == "1");
+  {  // the good values, as the file may write them, each taken as that rate; and a stored value read back
+    const struct {
+      const char *text;
+      int hz;
+    } good[] = {{"1", 1}, {"2", 2}, {"4", 4}, {"8", 8}, {"8 Hz", 8}, {"4hz", 4}, {"1 HZ", 1}, {"\"2\"", 2}, {"8  # the fastest", 8}};
+    for (const auto &g : good) {
+      const Applied a = apply(std::string("display_low_hz = 4\ndisplay_low_hz = ") + g.text + "\n");
+      if (a.r.problems() != 0 || a.s.displayLowHz != g.hz) printf("  display_low_hz = %s: not taken as %d\n", g.text, g.hz);
+      CHECK(a.r.problems() == 0 && a.s.displayLowHz == g.hz && dispower::lowHzValid(a.s.displayLowHz));
+      Settings back;
+      CHECK(applyStoredSetting(back, idx("display_low_hz"), fmt(a.s, idx("display_low_hz")).c_str()) && back.displayLowHz == g.hz);
+    }
+    // bad ones: not a rate the panel has on offer, or not a rate at all.  Each is one problem, with its row on the page
+    // ("line 2: 'display_low_hz': expected 1, 2, 4, 8"), and the setting stays as the line before left it; a good value
+    // on the next line is still taken (the check can fail: it is the value, not the setting, that is refused)
+    // ("-2" would be read as 2: the parser leaves out '-' in a word, as in "d-mon-y")
+    for (const char *w : {"3", "0", "16", "0.5", "0.25", "2.5", "fast", "low", "on", "2 MHz", "1,2"}) {
+      const Applied a = apply(std::string("display_low_hz = 4\ndisplay_low_hz = ") + w + "\ndisplay_power = low\n");
+      const bool refused = a.r.problems() == 1 && a.r.bad == 1 && a.s.displayLowHz == 4 && a.s.displayPower == DISPPOWER_LOW;
+      if (!refused) printf("  display_low_hz = %s: not refused (%d problems, %d Hz)\n", w, a.r.problems(), (int)a.s.displayLowHz);
+      CHECK(refused);
+      CHECK(a.r.issueCount == 1 && a.r.issues[0].line == 2);
+      CHECK(a.r.issueCount == 1 && std::string(a.r.issues[0].text) == "line 2: 'display_low_hz': expected 1, 2, 4, 8");
+      const Applied ok = apply(std::string("display_low_hz = ") + w + "\ndisplay_low_hz = 1\n");
+      CHECK(ok.r.problems() == 1 && ok.s.displayLowHz == 1);
+    }
+    // stored text that no longer validates leaves it alone
+    Settings u;
+    CHECK(!applyStoredSetting(u, idx("display_low_hz"), "3") && !applyStoredSetting(u, idx("display_low_hz"), ""));
+    CHECK(u.displayLowHz == 2 && !settingIsUserSet(u, idx("display_low_hz")));
+    // an empty value forgets it: back to the default
+    const Applied forgot = apply("display_low_hz = 8\ndisplay_low_hz =\n");
+    CHECK(forgot.r.problems() == 0 && forgot.s.displayLowHz == 2 && !settingIsUserSet(forgot.s, idx("display_low_hz")));
   }
 
   // stored text that no longer validates is ignored, and leaves the setting alone

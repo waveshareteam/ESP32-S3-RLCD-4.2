@@ -40,4 +40,5 @@
 #define POWER_LOG 1
 #define LIGHT_SLEEP 1
 #define DISPLAY_POWER "low"
+#define DISPLAY_LOW_HZ 1
 #define WEATHER_INTERVAL_MIN 30

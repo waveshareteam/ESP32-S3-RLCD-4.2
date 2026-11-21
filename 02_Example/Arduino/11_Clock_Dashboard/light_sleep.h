@@ -48,12 +48,12 @@
 // 7 ms after it (3.6 ms on average), with nothing spun.  (Aimed at the send itself, as before, an early wake-up spun
 // the rest, some 1.5 ms a second.)  A wake-up that does come before the moment (a sleep of over a second, or a board
 // that differs from the model) is spun or napped into the send (SEND and SLEEP in loop()), so no send begins early.
-// The frame then reaches the glass 0 to 1000 ms after it is sent (display_power = low; 0 to 39 ms with normal), and
-// the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and slow work starts up to 2 ms
-// late, where the milliseconds do not matter.  Stats::worstLateWakeUs() keeps how much later than asked a nap woke at
-// worst; a send after it began that much and kWakeLagUs, less the guard, after its moment, so on the board a wake-up
-// later than the model's adds to the lag (the console's power command prints it, though with the console on the chip
-// does not sleep).  None of it has been measured on the board.
+// The frame then reaches the glass 0 to one refresh after it is sent (display_power = low, 0 to 500 ms at 2 Hz; 0 to
+// 39 ms with normal), and the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and
+// slow work starts up to 2 ms late, where the milliseconds do not matter.  Stats::worstLateWakeUs() keeps how much
+// later than asked a nap woke at worst; a send after it began that much and kWakeLagUs, less the guard, after its
+// moment, so on the board a wake-up later than the model's adds to the lag (the console's power command prints it,
+// though with the console on the chip does not sleep).  None of it has been measured on the board.
 //
 // Keeping time.  The chip's timer stands still while it sleeps, and the SDK puts it forward afterwards by the time
 // the RTC's slow clock counted: an RC oscillator inside the chip, calibrated against the crystal before every sleep.

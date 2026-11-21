@@ -13,6 +13,7 @@
 #define LOCATION_LATITUDE (-90)
 #define LOCATION_LONGITUDE 180
 #define CPU_MHZ 240
+#define DISPLAY_LOW_HZ 8
 
 #define WIFI_SSID "YourWiFiName"
 #define WIFI_PASSWORD "YourWiFiPassword"

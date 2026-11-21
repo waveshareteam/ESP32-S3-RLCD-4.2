@@ -273,19 +273,20 @@ void ST7305_U8g2::setLowPower(bool low)
   _lowPower = low;
 }
 
-void ST7305_U8g2::setLowRate(bool busy)
+void ST7305_U8g2::setLowRate(bool busy, int lowHz)
 {
-  if (!dispower::rateNeedsWrite(_lowPower, _rate, busy)) {
+  _lowHz = lowHz;
+  if (!dispower::rateNeedsWrite(_lowPower, _rate, busy, lowHz)) {
     return;
   }
-  const uint8_t b2[] = {dispower::frameRate(busy)};
+  const uint8_t b2[] = {dispower::frameRate(busy, lowHz)};
   _cmd_data(0xB2, b2, sizeof(b2));
   _rate = b2[0];
 }
 
 bool ST7305_U8g2::lowRateBusy() const
 {
-  return _lowPower && _rate == dispower::kBusyFrameRate;
+  return dispower::atBusyRate(_lowPower, _rate, _lowHz);
 }
 
 void ST7305_U8g2::setRestMode()
@@ -307,7 +308,7 @@ void ST7305_U8g2::fullInit()
   const uint8_t d1[] = {0x01};
   const uint8_t c0[] = {0x11, 0x04};
   const uint8_t d8[] = {0x80, 0xE9};
-  const uint8_t b2[] = {dispower::kFrameRate};  // Waveshare's 0x02: 25.5 Hz in the high power mode, 1 Hz in the low one
+  const uint8_t b2[] = {dispower::kFrameRate};  // 25.5 Hz in the high power mode as Waveshare's 0x02; 2 Hz, the default, in the low one
   const uint8_t b3[] = {0xE5, 0xF6, 0x05, 0x46, 0x77, 0x77, 0x77, 0x77, 0x76, 0x45};
   const uint8_t b4[] = {0x05, 0x46, 0x77, 0x77, 0x77, 0x77, 0x76, 0x45};
   const uint8_t g_timing[] = {0x32, 0x03, 0x1F};

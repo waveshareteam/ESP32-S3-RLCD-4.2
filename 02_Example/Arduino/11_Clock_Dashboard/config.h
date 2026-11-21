@@ -152,8 +152,9 @@
 // before the second starts.  The panel refreshes itself at 25.5 Hz (every 39 ms),
 // so a frame shows up 0-39 ms after it has been sent; half of that makes the average
 // error zero.  Raise it if the digits seem to change late, lower it if early.  With
-// DISPLAY_POWER "low" the panel refreshes at 1 Hz and the clock adds 480 ms to it (at
-// 8 Hz for the seconds after a button press, and 43 ms).
+// DISPLAY_POWER "low" the panel refreshes at DISPLAY_LOW_HZ, 2 Hz unless set, and the
+// clock adds 230 ms to it (480 at 1 Hz, 105 at 4, 43 at 8, and at 8 Hz for the seconds
+// after a button press).
 #define DISPLAY_LATENCY_MS 20
 
 // ----------------------------------------------------------------------------
@@ -272,12 +273,22 @@
 #endif
 
 // "normal" or "low": how the display's controller (ST7305) drives the panel.  "low" = its low power mode, which
-// refreshes the panel once a second instead of 25.5 times (8 times for the seconds after a button press): less
-// current (how much has not been measured), and a frame shows up 0 to 1000 ms after it was sent instead of 0 to 39,
-// which the frame timing allows for (DISPLAY_LATENCY_MS and 480 ms more, display_power.h), so the seconds change up
-// to about 500 ms early or late.  Not yet tried on the board (README: "The display's low power mode").
+// refreshes the panel DISPLAY_LOW_HZ times a second instead of 25.5 (8 times for the seconds after a button press):
+// less current (how much has not been measured), and a frame shows up 0 to 500 ms after it was sent at 2 Hz instead of
+// 0 to 39, which the frame timing allows for (DISPLAY_LATENCY_MS and 230 ms more, display_power.h), so the seconds
+// change up to about 250 ms early or late.  Not yet tried on the board (README: "The display's low power mode").
 #ifndef DISPLAY_POWER
 #define DISPLAY_POWER "normal"
+#endif
+
+// 1, 2, 4 or 8: with DISPLAY_POWER "low", the panel's refreshes a second once the seconds after a button press are
+// over.  The seconds change up to half a refresh early or late: about 500 ms at 1, 250 at 2, 125 at 4, 63 at 8.  At 1
+// a second may now and then never be shown, or be shown for two refreshes, as the panel's own oscillator and the
+// crystal drift past each other; at 2 and up none can be lost.  Fewer refreshes should draw a little less current
+// (some 0.08 mA for each refresh a second, by a guess), which has not been measured.  Not yet tried on the board
+// (README: "The display's low power mode").
+#ifndef DISPLAY_LOW_HZ
+#define DISPLAY_LOW_HZ 2
 #endif
 
 // The audio chips on the board (a codec, a microphone ADC, an amplifier) are not used by the clock.  1 = at

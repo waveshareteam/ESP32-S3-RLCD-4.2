@@ -113,7 +113,7 @@ void testMistakes() {
   const Settings b = buildDefaults(&rep);
   const Settings factory;
 
-  // the seven bad ones stay as they were ...
+  // the eight bad ones stay as they were ...
   CHECK_STR(b.hostname, factory.hostname);
   CHECK(b.wifiPowerSave == WIFISAVE_NORMAL);
   CHECK(b.timeFormat == TIME_24H);
@@ -121,6 +121,7 @@ void testMistakes() {
   CHECK(b.cpuMhz() == 80);
   CHECK(b.cpuIdle == CPUIDLE_OFF && b.cpuIdleMhz() == 0);  // 10 MHz is not on offer
   CHECK(b.console == CONSOLE_ON);
+  CHECK(b.displayLowHz == factory.displayLowHz && b.displayLowHz == 2);  // 3 Hz is not a rate the panel has
   // ... the good ones beside them count
   CHECK(b.dateFormat == DATE_D_MON_Y && !b.showWeek && b.batteryCapacityMah == 1800);
   CHECK_NEAR(b.latitude, -31.952240, 1e-6);  // coordinates keep their digits: about a metre
@@ -128,7 +129,7 @@ void testMistakes() {
   CHECK(b.userSet == 0);
 
   // and they are reported, by the name of the macro and with the reason; the first three are kept
-  CHECK(rep.problems == 7);
+  CHECK(rep.problems == 8);
   CHECK(rep.kept == BuildReport::kKept);
   const char *want[] = {"APP_HOSTNAME: ", "WIFI_POWER_SAVE: ", "TIME_FORMAT: "};
   for (int i = 0; i < 3; i++) {
@@ -161,6 +162,7 @@ void testLimits() {
   CHECK_NEAR(b.latitude, -90.0, 1e-9);
   CHECK_NEAR(b.longitude, 180.0, 1e-9);
   CHECK(b.cpuMhz() == 240);
+  CHECK(b.displayLowHz == 8);  // the fastest rate at rest there is
 
   // the names secrets.example.h comes with mean "no network yet", passwords included
   CHECK(!b.hasMainWifi() && !b.hasBackupWifi());
