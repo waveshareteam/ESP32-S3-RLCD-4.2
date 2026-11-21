@@ -1251,7 +1251,7 @@ static void testFramePlan() {
           CHECK(abs(quietMs - expectMs) <= 1 && quietMs > (mhz == 80 ? 650 : 515));
         }
         CHECK(p.quiet(101, 1000000 - lead - P::kQuietUs - 1) && !p.quiet(101, 1000000 - lead - P::kQuietUs));
-        CHECK(!p.quiet(101, 1000000 - lead) && p.idleUs(101, 1000000 - lead - P::kQuietUs) == P::kQuietUs);
+        CHECK(!p.quiet(101, 1000000 - lead) && p.idleUs(101, 1000000 - lead - P::kQuietUs) == P::kQuietUs + P::kWakeLagUs);
       }
     }
   }
@@ -1306,7 +1306,17 @@ static void testFramePlan() {
     CHECK(s.action == P::IDLE && s.waitUs == 970000);  // the lead, so slow work may run (it used to wait for the tick)
     s = p.next(501, 10000, false);  // the second has begun and it was shown: slow work, the send 955 ms away
     CHECK(s.action == P::IDLE && s.waitUs == 955000);
-    CHECK(p.idleUs(501, 10000) == 955000 - P::kWakeLeadUs && p.idleUs(500, 995000) == 970000 - P::kWakeLeadUs);
+    CHECK(p.idleUs(501, 10000) == 955000 + P::kWakeLagUs && p.idleUs(500, 995000) == 970000 + P::kWakeLagUs);
+    // the sleep before the send is aimed kWakeLagUs past its moment (965 ms into 501): from kSpinUs before that moment
+    // next() asks for the send (and idleUs() says 0), with no wait once it has come, so a wake-up anywhere in the lag
+    // sends at once
+    CHECK(p.idleUs(501, 959999) == P::kSpinUs + 1 + P::kWakeLagUs && p.next(501, 959999, false).action == P::SLEEP);
+    s = p.next(501, 960000, false);
+    CHECK(p.idleUs(501, 960000) == 0 && s.action == P::SEND && s.waitUs == P::kSpinUs);
+    for (int32_t lag : {0, P::kWakeLagUs / 2, P::kWakeLagUs}) {
+      s = p.next(501, 965000 + lag, false);
+      CHECK(s.action == P::SEND && s.waitUs == 0 && p.idleUs(501, 965000 + lag) == 0);
+    }
   }
   {  // a forced redraw is immediate, and in the last ~110 ms before a tick it shows the second about to start
     P p(20000);
@@ -1351,7 +1361,7 @@ static void testFramePlan() {
     r.sent(15000);  // 501 went out 35 ms before its tick ...
     r.drew(502, 30000, true);  // ... and 502 is drawn before it
     s = r.next(500, 990000, false);  // (quiet: its send is 975 ms off, where it used to wait for the tick)
-    CHECK(s.action == P::IDLE && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 975000 - P::kWakeLeadUs);
+    CHECK(s.action == P::IDLE && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 975000 + P::kWakeLagUs);
     s = r.next(499, 990000, false);  // back by a second
     CHECK(!r.prepared() && s.action == P::DRAW_NOW && s.sec == 499);
     P f(20000);
@@ -1725,7 +1735,7 @@ static void testFramePlanPanel() {
     w.drew(500, 30000, false);
     w.sent(15000);
     w.drew(502, 30000, true);
-    CHECK(w.idleUs(500, 967000) == 1033000 - 15000 - busy);
+    CHECK(w.idleUs(500, 967000) == 1033000 - 15000 - busy + P::kWakeLagUs);
     CHECK(dispower::mayRest(true, false, w.prepared(), w.idleUs(500, 967000)));
     w.setLatencyUs(rest);
     s = w.next(500, 967000, false);
@@ -1740,7 +1750,7 @@ static void testFramePlanPanel() {
       c.sent(15000);
       c.drew(501, 30000, true);
       const int32_t usec = 1000000 - 15000 - busy - 470000;
-      CHECK(c.idleUs(500, usec) == 470000 && c.quiet(500, usec));
+      CHECK(c.idleUs(500, usec) == 470000 + P::kWakeLagUs && c.quiet(500, usec));
       bool rested = false;
       if (!clockFirst) rested = dispower::mayRest(true, false, c.prepared(), c.idleUs(500, usec));
       c.clockChanged(80, 20);

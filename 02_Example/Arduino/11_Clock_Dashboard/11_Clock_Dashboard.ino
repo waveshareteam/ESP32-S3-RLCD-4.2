@@ -266,8 +266,8 @@ static void serviceDisplayRate(uint32_t nowMs, const struct timeval &tv) {
   if (s_busyUntilMs != 0 && (int32_t)(s_busyUntilMs - nowMs) <= 0) s_busyUntilMs = 0;  // over (as s_pokeUntilMs)
   const bool sweep = CLOCK_SWEEP_FPS > 0;
   const bool prepared = s_planner.prepared() || sweep;
-  const int32_t untilSendUs = sweep ? INT32_MAX : s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);
-  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_busyUntilMs != 0, prepared, untilSendUs)) {
+  const int32_t idleUs = sweep ? INT32_MAX : s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);  // (the send's wait and the lag)
+  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_busyUntilMs != 0, prepared, idleUs)) {
     applyDisplayPower();
   }
 }
@@ -1015,7 +1015,8 @@ static void prepareFrame(time_t shown, float frac, bool scheduled) {
 }
 
 // How late a scheduled frame went out: the transfer should end DISPLAY_LATENCY_MS before its
-// second starts.
+// second starts.  (After a light sleep it begins a few milliseconds after its moment on purpose,
+// FramePlanner::kWakeLagUs, and that counts here like any other lateness.)
 static void recordLateness() {
   struct timeval tv;
   gettimeofday(&tv, nullptr);
@@ -1508,7 +1509,7 @@ static bool lightSleepStep() {
   in.busy = s_forceRedraw || s_restartAsked || s_cubeOn || netAskPending();
   in.backOff = s_sleepRefusedMs != 0 && (uint32_t)(nowMs - s_sleepRefusedMs) < lightsleep::kRetryMs;
   if (!in.backOff) s_sleepRefusedMs = 0;  // (over: a time long past must not come round again)
-  in.frameInUs = s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);
+  in.frameInUs = s_planner.idleUs(tv.tv_sec, (int32_t)tv.tv_usec);  // (FramePlanner::kWakeLagUs past the send's moment)
   in.workInUs = slowWorkInUs(nowMs, tv.tv_sec, (int32_t)tv.tv_usec);
   if (s_toast[0]) {  // the banner comes down then
     const int32_t ms = (int32_t)(s_toastUntilMs - nowMs);

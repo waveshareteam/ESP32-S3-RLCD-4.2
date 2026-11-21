@@ -8,7 +8,7 @@
 // some 9 to 12 mA (Espressif gives 13.2 mA at 40 MHz and nothing lower).  In light sleep it draws about a quarter of a
 // milliamp and keeps its memory and the settings of its peripherals (the display keeps its picture by itself).  So
 // when nothing needs the chip awake, the loop sleeps until the next thing it has to do instead of napping: one sleep
-// a second, from after the draw to just before the send.  Slow work that is due runs in the same wake, straight
+// a second, from after the draw to just after the send's moment.  Slow work that is due runs in the same wake, straight
 // after the draw (FramePlanner::quiet() counts the time to the send of the frame just drawn), so it needs no sleep
 // and wake of its own.  The Arduino core has no automatic light sleep (CONFIG_PM_ENABLE is not set), so the loop
 // asks for each one itself.
@@ -34,20 +34,26 @@
 //   * the next step of the frame planner (frame_plan.h, FramePlanner::idleUs()), or anything else that is due
 //     (a banner to take down), closer than kMinSleepUs.
 // The sleep ends 1/kGuardDiv of its length (plus kGuardUs, which is none) before the first of those, so the loop
-// finds things as they would have been without it, give or take the wake-up's own lateness (below).  KEY and BOOT
-// wake it at once (a low level on either pin).
+// finds things as they would have been without it, give or take the wake-up's own lateness (below); for the frame
+// that first thing is a moment a few milliseconds past its send (below).  KEY and BOOT wake it at once (a low level on
+// either pin).
 //
 // Why the guard can be this small: the RC clock that times the sleep is calibrated against the crystal before every
 // sleep, and the simulation (tools/tests/test_radio.cpp) lets a sleep wake up to 1 ms early or 2 ms late, give or take
 // 0.2 % of its length.  The guard is the 0.2 % and nothing more: it covers the RC clock's spread either way, and not
 // the wake-up's own lateness (up to 2 ms in the model, not measured on the board).  The sleep before a send is aimed
-// at the send itself (FramePlanner::kWakeLeadUs is 0, FramePlanner::idleUs()): a wake-up that comes early is spun or
-// napped into the send (SEND and SLEEP in loop()), and one that comes late begins the send at once, late by as much,
-// so in the model a send after a wake-up begins up to 2 ms after its moment, for a frame that reaches the glass 0 to
-// 1000 ms after it is sent (display_power = low); the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and
-// slow work starts as late, where the milliseconds do not matter.  Stats::worstLateWakeUs() keeps how much later than
-// asked a nap woke at worst, and so how late a send can have begun on the board (the console's power command prints
-// it, though with the console on the chip does not sleep).  None of it has been measured on the board.
+// past it, FramePlanner::kWakeLagUs (5 ms) after the send's moment (FramePlanner::idleUs()): over a sleep of about a
+// second, the one there is between two frames, the guard, the RC clock's spread and the millisecond early add up to
+// 4.8 ms at most, so in the model a wake-up is never before the send's moment and the send begins at once, 0.2 to
+// 7 ms after it (3.6 ms on average), with nothing spun.  (Aimed at the send itself, as before, an early wake-up spun
+// the rest, some 1.5 ms a second.)  A wake-up that does come before the moment (a sleep of over a second, or a board
+// that differs from the model) is spun or napped into the send (SEND and SLEEP in loop()), so no send begins early.
+// The frame then reaches the glass 0 to 1000 ms after it is sent (display_power = low; 0 to 39 ms with normal), and
+// the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and slow work starts up to 2 ms
+// late, where the milliseconds do not matter.  Stats::worstLateWakeUs() keeps how much later than asked a nap woke at
+// worst; a send after it began that much and kWakeLagUs, less the guard, after its moment, so on the board a wake-up
+// later than the model's adds to the lag (the console's power command prints it, though with the console on the chip
+// does not sleep).  None of it has been measured on the board.
 //
 // Keeping time.  The chip's timer stands still while it sleeps, and the SDK puts it forward afterwards by the time
 // the RTC's slow clock counted: an RC oscillator inside the chip, calibrated against the crystal before every sleep.
@@ -273,8 +279,9 @@ class Stats {
   uint32_t naps() const { return naps_; }
   uint32_t buttonWakes() const { return buttonWakes_; }
   uint32_t refused() const { return refused_; }
-  // The most a nap that the timer ended took beyond the time asked for (0: none did).  Past the guard (1/kGuardDiv of
-  // the length, and kGuardUs), that much is how late a send began after it (see the top).
+  // The most a nap that the timer ended took beyond the time asked for (0: none did).  That much and
+  // FramePlanner::kWakeLagUs, less the guard (1/kGuardDiv of the length, and kGuardUs), is how late a send began after
+  // it (see the top).
   int64_t worstLateWakeUs() const { return worstLateWakeUs_; }
 
  private:

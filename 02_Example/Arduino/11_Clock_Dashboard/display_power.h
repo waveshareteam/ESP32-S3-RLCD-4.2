@@ -87,17 +87,18 @@ inline bool rateNeedsWrite(bool inLpm, uint8_t current, bool busy) { return inLp
 constexpr int32_t kRestLeadGrowUs = kExtraLatencyUs - kBusyExtraLatencyUs;
 
 // Back to the rate at rest: once the kBusyMs after a press are over (`poked` false), with a frame prepared
-// (FramePlanner::prepared()), and only while the wait before that frame's send (`untilSendUs`, FramePlanner::idleUs())
-// is more than kRestLeadGrowUs and FramePlanner::kSpinUs.  By the longer lead its send then still has more than
-// kSpinUs to go, so it goes out on time.  (Without light sleep the CPU clock may come down at the same moment, which
-// lengthens the send's own part of the lead: serviceClock() runs first, so `untilSendUs` has that already.)  A quiet
-// planner, the rule up to 2 Hz, is not enough: quiet() promises more than kQuietUs (300 ms) before the send by the
-// busy lead, and 1 Hz takes 437.5 ms more, so the frame could be due in the past and late.  With light sleep the
-// moment is the first wake after the seconds of the press, straight after its draw (the send about 955 ms off by the
-// busy lead, 520 by the one at rest).  With no frame prepared the draw that comes next might not be over in time at
-// the 20 MHz idle clock (without light sleep).
-inline bool mayRest(bool busyNow, bool poked, bool prepared, int32_t untilSendUs) {
-  return busyNow && !poked && prepared && untilSendUs > kRestLeadGrowUs + FramePlanner::kSpinUs;
+// (FramePlanner::prepared()), and only while the wait before that frame's send is more than kRestLeadGrowUs and
+// FramePlanner::kSpinUs.  `idleUs` is FramePlanner::idleUs(), which is that wait and FramePlanner::kWakeLagUs (the
+// light sleep is aimed that far past the send), so the lag is taken off again here.  By the longer lead its send then
+// still has more than kSpinUs to go, so it goes out on time.  (Without light sleep the CPU clock may come down at the
+// same moment, which lengthens the send's own part of the lead: serviceClock() runs first, so `idleUs` has that
+// already.)  A quiet planner, the rule up to 2 Hz, is not enough: quiet() promises more than kQuietUs (300 ms) before
+// the send by the busy lead, and 1 Hz takes 437.5 ms more, so the frame could be due in the past and late.  With light
+// sleep the moment is the first wake after the seconds of the press, straight after its draw (the send about 955 ms
+// off by the busy lead, 520 by the one at rest).  With no frame prepared the draw that comes next might not be over in
+// time at the 20 MHz idle clock (without light sleep).
+inline bool mayRest(bool busyNow, bool poked, bool prepared, int32_t idleUs) {
+  return busyNow && !poked && prepared && idleUs > kRestLeadGrowUs + FramePlanner::kSpinUs + FramePlanner::kWakeLagUs;
 }
 
 // One step of a switch between the modes: a command without parameters, or the source voltages (VOLTAGES, which

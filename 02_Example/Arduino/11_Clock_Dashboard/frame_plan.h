@@ -8,11 +8,12 @@
 // into the display buffer a second ahead, straight after the one before it has been
 // sent, and sent just before it starts: the draw may run long by most of a second
 // without the digits changing late, and the send and the draw are one stretch of work,
-// so with light sleep (light_sleep.h) the chip wakes once a second, for the send itself
+// so with light sleep (light_sleep.h) the chip wakes once a second, for the send
 // (idleUs()).  The panel refreshes itself at 25.5 Hz, so a frame shows up
 // 0-39 ms after it has been sent (0-1000 ms at the 1 Hz of display_power = low, and
 // 0-125 ms at its 8 Hz after a button press, display_power.h); the send is timed to end
-// `latencyUs` before the second starts, which puts the average error at zero.
+// `latencyUs` before the second starts, which puts the average error at zero.  (After a
+// light sleep it goes out a few milliseconds later on purpose: kWakeLagUs.)
 //
 // What the frame shows besides the time (the weather, the sensors, the battery) is
 // taken when it is drawn, so up to a second before it is on the glass; whatever has to
@@ -45,7 +46,10 @@ class FramePlanner {
   };
 
   static constexpr int32_t kSpinUs = 5000;      // waits shorter than this are spun, longer ones slept
-  static constexpr int32_t kWakeLeadUs = 0;     // light sleep is aimed this far ahead of the send (none: at the send)
+  // Light sleep is aimed this far past the send's moment (idleUs()), so that a wake-up is never early and nothing is
+  // spun before the send: the sleep's guard (0.2 % of it, 1.9 ms of a sleep of 950 ms, light_sleep.h), the RC clock's
+  // 0.2 % and the millisecond a wake-up may come early add up to 4.8 ms in the simulation.
+  static constexpr int32_t kWakeLagUs = 5000;
   static constexpr int32_t kQuietUs = 300000;   // slow work only with more than this left before the send
 
   explicit FramePlanner(int32_t latencyUs) : latencyUs_(latencyUs) {}
@@ -103,16 +107,19 @@ class FramePlanner {
     return st;
   }
 
-  // How long the loop may leave the planner alone (light_sleep.h), if nothing is forced meanwhile: until the send of
-  // the prepared frame (less kWakeLeadUs, which is none); 0 when it asks for something now (with no frame prepared it
-  // always does: PREPARE or DRAW_NOW).  next() asks for nothing but IDLE or SLEEP until then, or for the SEND once the
-  // wait is down to kSpinUs: a sleep that wakes up to kSpinUs early is spun into the send (SEND), one that wakes
-  // earlier naps a little more first (SLEEP), and one that wakes after the send's moment sends at once, late by that
-  // much (light_sleep.h says how much that can be).
+  // How long the loop may sleep (light_sleep.h) before it asks again, if nothing is forced meanwhile: until kWakeLagUs
+  // past the send's moment of the prepared frame; 0 when it asks for something now (with no frame prepared it always
+  // does, PREPARE or DRAW_NOW, and with one it asks for the send once the wait is down to kSpinUs).  next() asks for
+  // nothing but IDLE or SLEEP until kSpinUs before the send's moment, then for the SEND, with no wait at all once the
+  // moment has come.  So a sleep that wakes up to kWakeLagUs early (in the simulation none of up to a second wakes
+  // earlier) sends at once, late on purpose by what is left of kWakeLagUs, or by more if it wakes late (light_sleep.h
+  // says how much that can be); one that wakes earlier still (a sleep of over a second, or a board that differs from
+  // the simulation) is spun into the send (SEND) or naps a little more first (SLEEP), as when the sleep was aimed at
+  // the send itself.
   int32_t idleUs(time_t sec, int32_t usec) const {
     if (!prepared_ || preparedSec_ < sec || preparedSec_ > sec + 2) return 0;  // (a frame next() drops counts as none)
     const int32_t waitUs = untilSendUs(sec, usec);
-    return waitUs > kWakeLeadUs ? waitUs - kWakeLeadUs : 0;
+    return waitUs > kSpinUs ? waitUs + kWakeLagUs : 0;  // (from kSpinUs on next() asks for the send)
   }
 
   // May slow work (I2C sensors, battery, a line of the power log) run now, `sec` / `usec` being the clock?  Never

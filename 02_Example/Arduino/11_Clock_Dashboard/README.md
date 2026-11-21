@@ -853,7 +853,7 @@ The block's own clock is left on: the SDK's check for a computer on the port kee
 off the clock has little to do in a second: it sends the second it drew a second ago just before the tick, draws the
 next one straight away, reads a sensor now and then. The rest of the second it used to spend idling awake, in naps of a
 few milliseconds; now it sleeps until the next thing is due, and KEY or BOOT wake it at once. That is **one sleep a
-second**, from the end of the draw (and of any slow work after it) to just before the next send. (Until the schedule
+second**, from the end of the draw (and of any slow work after it) to just after the moment of the next send. (Until the schedule
 was changed it was two: the draw was left until shortly before the send, so there was a sleep before the draw and a
 short one between the draw and the send, and every sleep costs about 5 ms awake on the way in and out. The new
 schedule has not run on the board either; see [Keeping the seconds on time](#keeping-the-seconds-on-time). With
@@ -873,7 +873,7 @@ sleep itself (`light_sleep.h`, `power.cpp`).
 | a button that is down, a click that is still being timed (the 0.32 seconds after it that tell a single click from a double), or a press that came while the loop was busy and is not answered yet | the clock times the clicks, and whoever pressed is waiting for the answer |
 | a redraw that is due, the cube, a restart, a press the network task has not taken yet | the network task counts its waits in the system's ticks, which stand still while the chip sleeps, so it could hear of a press seconds late (see below) |
 | slow work that is due (the sensors, the battery, a line of the power log) | it runs first; if it has to wait for its part of the second, the sleep ends where that part begins |
-| the next frame, a banner to take down | the sleep ends 0.2 % of its length before them, so the loop finds things as it would have without it, give or take how late the chip wakes; the one before a send is aimed at the send itself |
+| the next frame, a banner to take down | the sleep ends 0.2 % of its length before them, so the loop finds things as it would have without it, give or take how late the chip wakes; the one before a send is aimed 5 ms past the send |
 
 **After a button press** the chip used to stay awake for 8 seconds, the time the idle clock stays at the working clock
 (see [The idle clock](#the-idle-clock)). Now it is awake only while the press is being read and answered: while the
@@ -894,15 +894,20 @@ awake instead of 180, at about twice the current, and the rest of the second is 
 the idle clock between the presses, as without light sleep. With the console on the chip never
 sleeps, and the idle clock is used as before. **Not run on the board.**
 
-**The guard and the lead.** Every sleep ends 0.2 % of its length early, which covers the RC clock's spread over a
-sleep in the simulation, and the one before a send is aimed at the send itself. How late the chip wakes on top of that
-(up to 2 ms in the simulation) is not covered: a wake-up that comes early is spun into the send, and one that comes
-late begins the send at once, so a send may begin up to 2 ms after its moment (0.13 ms on average in the simulation),
-for a frame that reaches the glass 0 to 1000 ms after it is sent with `display_power = low`. A banner comes down and
-slow work starts that much late too. In return the chip is awake about 1.3 ms before a send in the simulation, where
-it was about 6 with a guard of 2 ms and 0.2 % and a lead of 3 ms, and some 16 with the first ones (5 ms and 1/128 of
-the sleep, and 5 ms). A board that wakes later than the simulation sends later by as much, with nothing to spare.
-**None of it has run on the board, and how late it really wakes has not been measured.**
+**The guard and the aim.** Every sleep ends 0.2 % of its length early, which covers the RC clock's spread over a
+sleep in the simulation. The one before a send is aimed 5 ms past the send's moment (`FramePlanner::kWakeLagUs`):
+the guard, the RC clock's spread and the millisecond the chip may wake early add up to 4.8 ms at most over the sleep
+of about a second between two frames, so in the simulation the chip never wakes before the send's moment and sends at
+once, with nothing to wait for. **So every frame after a sleep goes out a few milliseconds late on purpose**: the send
+begins 0.2 to 7 ms after its moment, 3.6 ms on average, in both display modes, for a frame that reaches the glass 0 to
+1000 ms after it is sent with `display_power = low` (0 to 39 ms with `normal`); the *Frames* line counts a frame late
+once it is more than 30 ms. In return nothing is spun before the send: aimed at the send itself, as it was before, a
+wake-up that came early spun the rest, some 1.5 ms a second at 80 MHz in the simulation (about 0.04 mA at 3.3 V).
+Before that the chip was awake about 6 ms before a send with a guard of 2 ms and 0.2 % and a lead of 3 ms, and some 16 with
+the first ones (5 ms and 1/128 of the sleep, and 5 ms). A wake-up that does come early (a longer sleep, or a board
+whose RC clock strays more than the simulation's) is still spun into the send, so no frame goes out early. A banner
+comes down and slow work starts up to 2 ms late. A board that wakes later than the simulation sends later by as much,
+on top of the 5 ms. **None of it has run on the board, and how late it really wakes has not been measured.**
 
 **What it should save** (an estimate; **nothing of it has been measured**). The owner measured on USB at 5 V, battery
 out, with `wifi_mode = sync`, `cpu_idle_mhz = 20`, `wifi_power_save = max` and the console off: **21.1 to 21.4 mA at the
@@ -918,12 +923,12 @@ second over the run; the old schedule had 2.05), and with light sleep the proces
 
 | `cpu_idle_mhz` | The chip, without light sleep | with it: asleep | the chip |
 | --- | --- | --- | --- |
-| 20 | 9.3 mA | 94 % of the time (81 % with the idle clock between the presses, as it used to be) | 1.9 mA (2.2) |
-| 40 | 13.7 mA | 94 % (90 %) | 1.9 mA (2.0) |
-| 80 (`off`) | 22.3 mA | 94 % (94 %) | 1.9 mA (1.9) |
+| 20 | 9.3 mA | 94 % of the time (81 % with the idle clock between the presses, as it used to be) | 1.8 mA (2.2) |
+| 40 | 13.7 mA | 94 % (90 %) | 1.8 mA (1.9) |
+| 80 (`off`) | 22.3 mA | 94 % (94 %) | 1.8 mA (1.8) |
 
 (With two sleeps a second, the schedule up to 1.12, it is 2.1 mA. With the chip kept awake for the 8 seconds after
-every press as well, and the idle clock between them, as up to 1.12, it was 2.5, 2.2 and 2.2 mA: a press every ten
+every press as well, and the idle clock between them, as up to 1.12, it was 2.5, 2.2 and 2.1 mA: a press every ten
 minutes is far more than most clocks get, so the real difference is smaller.)
 So with the owner's settings the chip should draw about 7 mA less at 3.3 V. The board turns the 5 V of USB into
 3.3 V (the charger's power path, then the buck-boost converter); at a guessed 85 % that is **about 5 mA less at 5 V:
@@ -942,7 +947,7 @@ also answers buttons sooner. Not measured.
 slow clock counted. On this board that is an RC oscillator inside the chip (there is no 32 kHz crystal), which the SDK
 calibrates against the main crystal before every sleep. So the seconds still come from the system clock and are drawn
 and sent on time as before (in the simulation no more frames were late with light sleep than without, and a send after
-a wake-up began at most 2 ms after its moment, see the guard and the lead above), but for the time
+a wake-up began at most 7 ms after its moment, 5 of them on purpose, see the guard and the aim above), but for the time
 asleep the system clock is only as good as that RC oscillator, and how good that is has not been measured here.
 With `wifi_mode = sync` the hourly network time puts it right, and the *Drift* line of the *Power and settings* page
 says how far the clock gets between two syncs: compare it with light sleep on and off. A clock that has drifted is set
