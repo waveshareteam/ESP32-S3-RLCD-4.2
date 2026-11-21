@@ -1235,7 +1235,7 @@ static void testFramePlan() {
     CHECK(s.action == P::SLEEP && s.waitUs == 970000);
     s = p.next(501, 10000, false);  // the second has begun and it was shown: slow work, the send 955 ms away
     CHECK(s.action == P::IDLE && s.waitUs == 955000);
-    CHECK(p.idleUs(501, 10000) == 955000 - P::kSpinUs && p.idleUs(500, 995000) == 970000 - P::kSpinUs);
+    CHECK(p.idleUs(501, 10000) == 955000 - P::kWakeLeadUs && p.idleUs(500, 995000) == 970000 - P::kWakeLeadUs);
   }
   {  // a forced redraw is immediate, and in the last ~110 ms before a tick it shows the second about to start
     P p(20000);
@@ -1280,7 +1280,7 @@ static void testFramePlan() {
     r.sent(15000);  // 501 went out 35 ms before its tick ...
     r.drew(502, 30000, true);  // ... and 502 is drawn before it
     s = r.next(500, 990000, false);
-    CHECK(s.action == P::SLEEP && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 970000);
+    CHECK(s.action == P::SLEEP && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 975000 - P::kWakeLeadUs);
     s = r.next(499, 990000, false);  // back by a second
     CHECK(!r.prepared() && s.action == P::DRAW_NOW && s.sec == 499);
     P f(20000);

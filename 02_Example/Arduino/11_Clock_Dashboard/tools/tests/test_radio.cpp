@@ -1288,11 +1288,13 @@ void splitUs(int64_t us, time_t *sec, int32_t *usec) {
   *usec = (int32_t)(us % 1000000);
 }
 
-// FramePlanner::idleUs(): for as long as it says, next() asks for nothing but naps, and once that time is up it asks
-// for a step.  The planner is driven the way the sketch drives it, at `mhz` (a frame costs 80 / mhz times as much),
-// and probed at every turn of the loop.  Returns the number of probes where `idle` (the planner's own, or a wrong one
-// that shows this can fail) is not borne out.  `latencyUs`: the planner's time to the glass (display_power.h); with
-// `switchHalfway` it changes to the other mode's figure half-way through, as a switch of display_power would.
+// FramePlanner::idleUs(): for as long as it says, next() asks for nothing but naps, or for the send of the prepared
+// frame once its wait is down to what is spun (kSpinUs) but still more than kWakeLeadUs; once that time is up it asks
+// for a step, and a send then waits kWakeLeadUs at most (the light sleep wakes that far ahead of it).  The planner is
+// driven the way the sketch drives it, at `mhz` (a frame costs 80 / mhz times as much), and probed at every turn of
+// the loop.  Returns the number of probes where `idle` (the planner's own, or a wrong one that shows this can fail) is
+// not borne out.  `latencyUs`: the planner's time to the glass (display_power.h); with `switchHalfway` it changes to
+// the other mode's figure half-way through, as a switch of display_power would.
 template <class Idle>
 int idleMisses(Idle idle, int mhz, uint64_t seed, int *probesOut = nullptr, int32_t latencyUs = 20000, bool switchHalfway = false) {
   FramePlanner p(latencyUs);
@@ -1301,15 +1303,17 @@ int idleMisses(Idle idle, int mhz, uint64_t seed, int *probesOut = nullptr, int3
   const double f = 80.0 / mhz;
   int64_t t = 1700000000LL * 1000000LL + 345678;
   int misses = 0, probes = 0;
-  auto probe = [&](int64_t at, bool wantStep) {
+  auto probe = [&](int64_t at, bool up) {
     time_t s;
     int32_t u;
     splitUs(at, &s, &u);
     FramePlanner q = p;  // (next() is asked of a copy: the probe must not change the plan)
-    const FramePlanner::Action a = q.next(s, u, false).action;
-    const bool step = a != FramePlanner::IDLE && a != FramePlanner::SLEEP;
+    const FramePlanner::Step st = q.next(s, u, false);
+    const bool step = st.action != FramePlanner::IDLE && st.action != FramePlanner::SLEEP;
+    const bool send = st.action == FramePlanner::SEND;
+    const bool ok = up ? step && (!send || st.waitUs <= FramePlanner::kWakeLeadUs) : !step || (send && st.waitUs > FramePlanner::kWakeLeadUs);
     probes++;
-    if (step != wantStep) misses++;
+    if (!ok) misses++;
   };
   for (int turn = 0; turn < 6000; turn++) {
     if (switchHalfway && turn == 3000) p.setLatencyUs(p.latencyUs() == 20000 ? dispower::latencyUs(true, 20000) : 20000);
@@ -1374,12 +1378,17 @@ void testFramePlanIdle() {
     if (misses) printf("  display_power = low, 80 MHz: %d of %d probes miss\n", misses, probes);
     CHECK(misses == 0 && probes > 20000);
   }
-  // the probes can fail: four ways of getting it wrong, each caught.  (Up to 1.12 the planner waited before it drew the
+  // the probes can fail: four ways of getting it wrong, each caught, and the lead of 5 ms there was before (the sleep
+  // aimed kSpinUs ahead of the send, where it is kWakeLeadUs now).  (Up to 1.12 the planner waited before it drew the
   // next second, and two of these were about that wait; the next second is drawn at once now, so they are about the
   // wait before the send.)
-  auto noSpin = [](const FramePlanner &p, time_t s, int32_t u) {  // the send that is spun counted as idle time
+  auto noLead = [](const FramePlanner &p, time_t s, int32_t u) {  // the lead counted as idle time: aimed at the send itself
     const int32_t id = p.idleUs(s, u);
-    return p.prepared() && id > 0 ? id + FramePlanner::kSpinUs : id;
+    return p.prepared() && id > 0 ? id + FramePlanner::kWakeLeadUs : id;
+  };
+  auto oldLead = [](const FramePlanner &p, time_t s, int32_t u) {  // aimed kSpinUs ahead of the send
+    const int32_t id = p.idleUs(s, u), less = FramePlanner::kSpinUs - FramePlanner::kWakeLeadUs;
+    return id > less ? id - less : 0;
   };
   auto waitToDraw = [](const FramePlanner &p, time_t s, int32_t u) {  // the wait before the draw that there was up to 1.12
     if (!p.prepared() && (p.lastSentSec() == s || p.lastSentSec() == s + 1)) {
@@ -1392,18 +1401,19 @@ void testFramePlanIdle() {
   auto comingOnly = [](const FramePlanner &p, time_t s, int32_t u) {  // a frame two seconds ahead taken for the coming one
     if (p.prepared() && p.preparedSec() == s + 2) {
       const int32_t w = 1000000 - u - (int32_t)p.sendCostUs() - p.latencyUs();
-      return w > FramePlanner::kSpinUs ? w - FramePlanner::kSpinUs : 0;
+      return w > FramePlanner::kWakeLeadUs ? w - FramePlanner::kWakeLeadUs : 0;
     }
     return p.idleUs(s, u);
   };
   auto fixedCost = [](const FramePlanner &p, time_t s, int32_t u) {  // the send cost of 80 MHz, whatever the clock
     if (p.prepared() && p.preparedSec() >= s && p.preparedSec() <= s + 2) {
       const int32_t w = (int32_t)(p.preparedSec() - s - 1) * 1000000 + 1000000 - u - 15000 - p.latencyUs();
-      return w > FramePlanner::kSpinUs ? w - FramePlanner::kSpinUs : 0;
+      return w > FramePlanner::kWakeLeadUs ? w - FramePlanner::kWakeLeadUs : 0;
     }
     return p.idleUs(s, u);
   };
-  CHECK(idleMisses(noSpin, 80, 3) > 100);
+  CHECK(idleMisses(noLead, 80, 3) > 100);
+  CHECK(idleMisses(oldLead, 20, 3) > 100);
   CHECK(idleMisses(waitToDraw, 20, 3) > 100);
   CHECK(idleMisses(comingOnly, 80, 3, nullptr, dispower::latencyUs(true, 20000)) > 100);  // (there the draw is over before the tick)
   CHECK(idleMisses(fixedCost, 20, 3) > 100);
@@ -1412,6 +1422,11 @@ void testFramePlanIdle() {
   b.drew(2000, 30000, true);
   CHECK(b.idleUs(1000, 500000) == 0);
 }
+
+// The earliest and the latest a light sleep asked for `askedUs` wakes in the simulation below (SleepLoop): 1 ms early
+// or 2 ms late, give or take 0.2 % of it.  Nothing of it has been measured on the board.
+int64_t modelEarliestWakeUs(int64_t askedUs) { return askedUs - 1000 - (int64_t)(askedUs * 0.002); }
+int64_t modelLatestWakeUs(int64_t askedUs) { return askedUs + 2000 + (int64_t)(askedUs * 0.002); }
 
 void testLightSleepDecide() {
   section("light sleep: when, and for how long");
@@ -1422,7 +1437,7 @@ void testLightSleepDecide() {
   base.frameInUs = 700000;
   {
     const Decision d = decide(base);  // nothing in the way: up to the next frame step, less the guard
-    CHECK(d.sleep && d.why == ASLEEP && d.us == 700000 - kGuardUs - 700000 / 128);
+    CHECK(d.sleep && d.why == ASLEEP && d.us == 700000 - kGuardUs - 700000 / kGuardDiv);
   }
   // what keeps it awake, one at a time, and the reason it gives
   struct Case {
@@ -1478,14 +1493,14 @@ void testLightSleepDecide() {
   {
     Inputs in = base;
     in.workInUs = 400000;
-    CHECK(decide(in).us == 400000 - kGuardUs - 400000 / 128);
+    CHECK(decide(in).us == 400000 - kGuardUs - 400000 / kGuardDiv);
     in.otherInUs = 300000;
-    CHECK(decide(in).us == 300000 - kGuardUs - 300000 / 128);
+    CHECK(decide(in).us == 300000 - kGuardUs - 300000 / kGuardDiv);
     in.frameInUs = 250000;
-    CHECK(decide(in).us == 250000 - kGuardUs - 250000 / 128);
+    CHECK(decide(in).us == 250000 - kGuardUs - 250000 / kGuardDiv);
     Inputs far = base;
     far.frameInUs = 1900000000;  // (the planner never says more than about two seconds, but)
-    CHECK(decide(far).us == kMaxSleepUs - kGuardUs - kMaxSleepUs / 128);
+    CHECK(decide(far).us == kMaxSleepUs - kGuardUs - kMaxSleepUs / kGuardDiv);
     Inputs none = base;  // no work due, no banner: those two do not shorten it
     none.workInUs = kNever;
     none.otherInUs = kNever;
@@ -1504,6 +1519,44 @@ void testLightSleepDecide() {
     CHECK(first > kMinSleepUs + kGuardUs && decide(in).us == kMinSleepUs);
     in.frameInUs = first - 1;
     CHECK(!decide(in).sleep);
+  }
+  // the guard against a late wake-up: one as late as the simulation lets it be (modelLatestWakeUs()) still comes
+  // before the moment the sleep was for, at every length there is, and so before the send begins (the sleep before a
+  // send is aimed FramePlanner::kWakeLeadUs ahead of it); that lead is left over for a board that wakes later
+  {
+    Inputs in = base;
+    int lengths = 0, past = 0, pastSend = 0, pastHalf = 0;
+    for (int32_t ahead = kMinSleepUs; ahead <= kMaxSleepUs; ahead += 997) {
+      in.frameInUs = ahead;
+      const Decision d = decide(in);
+      if (!d.sleep) continue;
+      lengths++;
+      const int64_t late = modelLatestWakeUs(d.us) - ahead;  // past the moment it was for (negative: before it)
+      if (late > 0) past++;
+      if (late >= FramePlanner::kWakeLeadUs) pastSend++;
+      if (modelLatestWakeUs(ahead - kGuardUs / 2 - ahead / (2 * kGuardDiv)) > ahead) pastHalf++;  // (half the guard)
+    }
+    printf("  a sleep as late as the simulation wakes ends before its moment at %d of %d lengths; with half the guard at %d\n",
+           lengths - past, lengths, lengths - pastHalf);
+    CHECK(lengths > 1900 && past == 0 && pastSend == 0);
+    CHECK(pastHalf == lengths);  // (the check can fail)
+  }
+  // a sleep that ends for a banner or for slow work ends before it by the guard and no more, and a late wake-up (as
+  // above) still comes before it
+  {
+    int checked = 0, wrong = 0;
+    for (int32_t at = 30000; at <= kMaxSleepUs; at += 9973) {
+      for (bool banner : {true, false}) {
+        Inputs in = base;
+        in.frameInUs = kMaxSleepUs + 500000;  // (the frame is not the first thing due)
+        (banner ? in.otherInUs : in.workInUs) = at;
+        const Decision d = decide(in);
+        const int64_t early = at - (int64_t)d.us;
+        checked++;
+        if (!d.sleep || early <= 0 || early > kGuardUs + at / kGuardDiv || modelLatestWakeUs(d.us) > at) wrong++;
+      }
+    }
+    CHECK(checked > 300 && wrong == 0);
   }
   // wifi off and wifi_mode = sync differ only in whether the radio is ever on; always mode never sleeps
   {
@@ -1539,6 +1592,77 @@ void testLightSleepDecide() {
     formatRow(312, REFUSED, row);
     CHECK_STR(row, "31.2 % of the time (now: SDK refused)");
   }
+}
+
+// After the light sleep before a send (decide() on FramePlanner::idleUs()), waking at the earliest or the latest
+// moment the simulation has (and `extraUs` later still, for the negative control), the loop as the sketch runs it:
+// SEND spins the rest, SLEEP tries lightSleepStep() and then naps, here with the longest naps there are (2 ms, or 5 ms
+// with more than 12 ms to go).  Every length of sleep the planner gives, at `mhz` and with display_power = low or not.
+struct WakeToSend {
+  int wakes = 0, sleepThenSend = 0, sendAtOnce = 0;
+  int other = 0;              // anything else: another sleep, or a step that is not the send
+  int64_t worstBehindUs = 0;  // how far past its moment the send began at worst (0: every one on time)
+};
+WakeToSend wakeToSend(int mhz, bool lowPower, int64_t extraUs) {
+  WakeToSend w;
+  for (int64_t u = 0; u < 2000000; u += 997) {
+    for (bool latest : {false, true}) {
+      FramePlanner p(lowPower ? dispower::latencyUs(true, 20000) : 20000);
+      if (mhz != 80) p.clockChanged(80, (uint32_t)mhz);
+      p.drew(502, 30000 * 80 / mhz, true);
+      int64_t t = 500 * 1000000LL + u;
+      time_t sec;
+      int32_t usec;
+      splitUs(t, &sec, &usec);
+      const FramePlanner::Step first = p.next(sec, usec, false);
+      if (first.action != FramePlanner::IDLE && first.action != FramePlanner::SLEEP) continue;  // (the send is spun from here)
+      const int64_t sendAt = t + first.waitUs;
+      lightsleep::Inputs in;
+      in.enabled = true;
+      in.frameInUs = p.idleUs(sec, usec);
+      const lightsleep::Decision d = lightsleep::decide(in);
+      if (!d.sleep) continue;
+      w.wakes++;
+      t += (latest ? modelLatestWakeUs(d.us) : modelEarliestWakeUs(d.us)) + extraUs;
+      bool napped = false;
+      for (;;) {
+        splitUs(t, &sec, &usec);
+        const FramePlanner::Step st = p.next(sec, usec, false);
+        if (st.action == FramePlanner::SEND) {
+          const int64_t behind = t + st.waitUs - sendAt;
+          if (behind > w.worstBehindUs) w.worstBehindUs = behind;
+          (napped ? w.sleepThenSend : w.sendAtOnce)++;
+          break;
+        }
+        in.frameInUs = p.idleUs(sec, usec);
+        if (st.action != FramePlanner::SLEEP || lightsleep::decide(in).sleep) {
+          w.other++;
+          break;
+        }
+        napped = true;
+        t += st.waitUs > 12000 ? 5000 : 2000;
+      }
+    }
+  }
+  return w;
+}
+
+void testLightSleepWake() {
+  section("light sleep: from the wake-up to the send");
+  for (int mhz : {20, 80}) {
+    for (bool lowPower : {true, false}) {
+      const WakeToSend w = wakeToSend(mhz, lowPower, 0);
+      printf("  %d MHz, display_power = %s: %d wakes, %d napped a little and sent, %d sent at once, %d otherwise; sends begun %.1f ms"
+             " behind at worst\n",
+             mhz, lowPower ? "low" : "normal", w.wakes, w.sleepThenSend, w.sendAtOnce, w.other, w.worstBehindUs / 1000.0);
+      CHECK(w.wakes > 3500 && w.sleepThenSend > 1000 && w.sendAtOnce > 1000 && w.other == 0 && w.worstBehindUs == 0);
+    }
+  }
+  // the check can fail: a board that wakes 10 ms later than the simulation does has its sends begin late (the guard
+  // covers the model, the lead 3 ms of the rest)
+  const WakeToSend slow = wakeToSend(20, true, 10000);
+  printf("  waking 10 ms later than modelled: sends begun %.1f ms behind at worst\n", slow.worstBehindUs / 1000.0);
+  CHECK(slow.worstBehindUs > 5000 && slow.other == 0);
 }
 
 // A stand-in for the chip: it writes down the calls of a nap, in order, as letters.
@@ -1593,7 +1717,8 @@ void testNapSteps() {
     WallFix fix;
     const Nap n = napOnce(c, fix, 600000);
     CHECK(c.calls == "ADSBa");
-    CHECK(n.slept && !n.byButton && !n.pressed && n.err == 0 && n.us == 600000 && n.wallFixUs == 0 && c.sleptUs == 600000);
+    CHECK(n.slept && !n.byButton && !n.pressed && n.err == 0 && n.us == 600000 && n.askedUs == 600000 && n.wallFixUs == 0 &&
+          c.sleptUs == 600000);
   }
   {  // ended by a button
     FakeChip c;
@@ -1658,6 +1783,38 @@ void testNapSteps() {
     st.add(pressed);
     CHECK(st.refused() == 1 && st.naps() == 2);
     CHECK(st.permille(1000000) == 0 && st.permille(3000000) == 1000);  // (never more than all of it, nor less than none)
+  }
+  // how late the timer's wake-ups came: the worst, against the time asked; a button ends one early on purpose, and one
+  // the SDK refused did not sleep
+  {
+    Stats st;
+    CHECK(st.worstLateWakeUs() == 0);
+    Nap n;
+    n.slept = true;
+    n.askedUs = 700000;
+    n.us = 699000;  // (early)
+    st.add(n);
+    CHECK(st.worstLateWakeUs() == 0);
+    n.us = 702500;
+    st.add(n);
+    n.us = 701000;
+    st.add(n);
+    CHECK(st.worstLateWakeUs() == 2500);
+    Nap button = n;
+    button.byButton = true;
+    button.askedUs = 20000;  // (ended by a button: not counted, whatever it took)
+    button.us = 300000;
+    st.add(button);
+    Nap refused;
+    refused.err = 0x103;
+    refused.askedUs = 20000;
+    refused.us = 90000;
+    st.add(refused);
+    CHECK(st.worstLateWakeUs() == 2500 && st.naps() == 4 && st.buttonWakes() == 1 && st.refused() == 1);
+    Nap timer = button;  // (the same nap ended by the timer: counted)
+    timer.byButton = false;
+    st.add(timer);
+    CHECK(st.worstLateWakeUs() == 280000);
   }
 }
 
@@ -1744,7 +1901,7 @@ struct DrawLate : FramePlanner {
 // calibrates the RC clock for some 4 ms, and takes that off the time asked for), and wakes up to 1 ms early or 2 ms
 // late, give or take 0.2 % of its length.  Stalls (a flash write, the radio stack: work of the other core) come at
 // random moments while the chip is awake; while it sleeps the other core sleeps too.  `Plan` is the frame planner, or
-// for the negative controls the schedule it had up to 1.12 (DrawLate, below).
+// for the negative controls the schedule it had up to 1.12 (DrawLate, below) or the old lead before a send (OldLead).
 struct SleepLoop {
   bool lightSleep = true;
   int idleMhz = 20;
@@ -1752,9 +1909,15 @@ struct SleepLoop {
   double stallEverySec = 0;    // stalls of 20 to 300 ms, about this often in the time awake (0: none)
   double slowDrawShare = 0;    // this share of the scheduled draws is held up by a stall of 20 to 300 ms (0: none)
   double pressEverySec = 600;  // a button press about this often
+  int64_t wakeLateUs = 0;      // every light sleep wakes this much later than above (to show that the checks can fail)
+  lightsleep::Decision (*decide)(const lightsleep::Inputs &) = lightsleep::decide;  // (or the old guard, to compare)
   // what came of it
   int frames = 0, late = 0, presses = 0, logLines = 0, sleeps = 0;
   int64_t worstLateUs = 0, worstBatteryGapUs = 0, worstLogLateUs = 0;
+  int64_t worstSendBehindUs = 0;    // how far past its moment a scheduled send began, at worst (0: every one on time)
+  lightsleep::Stats napStats;       // the naps, as the firmware counts them
+  int64_t wakeToSendUs = 0;         // from the timer's wake-up after a sleep for the send to the send, summed ...
+  int wakeToSends = 0;              // ... over this many
   int64_t worstBannerUs = 0;        // from the moment a banner should come down to the redraw, the worst ...
   int64_t worstBannerIdleUs = -1;   // ... of those that came down with no button pressed for a while (light sleep in play)
   int64_t worstPressUs = 0;         // from a press to the loop taking it, the worst of all
@@ -1772,6 +1935,7 @@ struct SleepLoop {
     int64_t nextStall = stallEverySec > 0 ? t + (int64_t)(stallEverySec * 1e6 * r.uni() * 2) : INT64_MAX;
     int64_t lastBattery = 0, lastSensor = 0, nextLog = t + 10 * 1000000LL, pokeUntil = 0, bannerUntil = t + 6000000;
     int64_t nextPress = t + 40 * 1000000LL;  // (the first one soon, so that every run has some)
+    int64_t wokeForSend = -1;                // when the timer ended a sleep that was for the send (-1: it did not)
     bool force = true, pressWokeIt = false;
     // ESP32-S3 datasheet v2.2, table 5-9 (radio off, peripheral clocks off): idle 22.0 / 13.2 mA and one core working
     // 28.4 / 16.2 mA at 80 / 40 MHz; 20 MHz is drawn out along the same line (Espressif gives nothing below 40)
@@ -1856,9 +2020,11 @@ struct SleepLoop {
           spend(c, WORKING);
           p.drew(st.sec, (uint32_t)c, false);
           send(false);
+          wokeForSend = -1;
           break;
         }
         case FramePlanner::PREPARE: {
+          wokeForSend = -1;
           int64_t c = cost(30000);
           if (slowDrawShare > 0 && r.uni() < slowDrawShare) c += (int64_t)((20 + 280 * r.uni()) * 1000);  // (a stall in the draw)
           spend(c, WORKING);
@@ -1867,6 +2033,15 @@ struct SleepLoop {
         }
         case FramePlanner::SEND:
           spend(st.waitUs, WORKING);  // (spun)
+          if (p.preparedScheduled()) {  // (its moment: the second it shows, less the send and the way to the glass)
+            const int64_t behind = t - ((int64_t)p.preparedSec() * 1000000 - (int64_t)p.sendCostUs() - p.latencyUs());
+            if (behind > worstSendBehindUs) worstSendBehindUs = behind;
+            if (wokeForSend >= 0) {
+              wakeToSendUs += t - wokeForSend;
+              wakeToSends++;
+            }
+          }
+          wokeForSend = -1;
           send(p.preparedScheduled());
           break;
         case FramePlanner::SLEEP:
@@ -1915,17 +2090,24 @@ struct SleepLoop {
           if (at < in.workInUs) in.workInUs = at;
         }
         if (bannerUntil) in.otherInUs = bannerUntil <= t ? 0 : (int32_t)std::min<int64_t>(bannerUntil - t, lightsleep::kMaxSleepUs);
-        const lightsleep::Decision d = lightsleep::decide(in);
+        const lightsleep::Decision d = decide(in);
         if (d.sleep) {
           sleeps++;
           spend(5000, WORKING);  // the calibration, the way in and out
-          int64_t us = d.us - 5000 + (int64_t)(d.us * 0.002 * (2 * r.uni() - 1)) + (int64_t)(3000 * r.uni()) - 1000;
+          int64_t us = d.us - 5000 + (int64_t)(d.us * 0.002 * (2 * r.uni() - 1)) + (int64_t)(3000 * r.uni()) - 1000 + wakeLateUs;
+          lightsleep::Nap nap;  // (as napOnce() hands it to the firmware's Stats)
+          nap.slept = true;
+          nap.askedUs = d.us;
           if (t + us > nextPress) {  // KEY ends it: awake a millisecond after the press
             us = nextPress + 1000 - t;
-            pressWokeIt = true;
+            pressWokeIt = nap.byButton = true;
           }
+          nap.us = 5000 + us;
+          napStats.add(nap);
           spend(us, ASLEEP);
           slept = true;
+          const bool forSend = p.prepared() && in.frameInUs <= in.workInUs && in.frameInUs <= in.otherInUs;
+          wokeForSend = forSend && !nap.byButton ? t : -1;
         }
       }
       if (!slept) spend(st.action == FramePlanner::SLEEP && st.waitUs <= 12000 ? 1000 + (int64_t)(r.uni() * 1000) : 4000 + (int64_t)(r.uni() * 1000), IDLE);
@@ -1934,6 +2116,100 @@ struct SleepLoop {
     chipMa = charge / (double)totalUs;
   }
 };
+
+// The old guard, to compare with: every sleep ended 5 ms and 1/128 of its length early.
+lightsleep::Decision decideOldGuard(const lightsleep::Inputs &in) {
+  lightsleep::Decision d = lightsleep::decide(in);
+  if (!d.sleep && d.why != lightsleep::SOON) return d;
+  const int64_t ahead = std::min<int64_t>({in.frameInUs, in.workInUs, in.otherInUs, lightsleep::kMaxSleepUs});
+  const int64_t us = ahead - 5000 - ahead / 128;
+  d.sleep = us >= lightsleep::kMinSleepUs;
+  d.us = d.sleep ? (int32_t)us : 0;
+  d.why = d.sleep ? lightsleep::ASLEEP : lightsleep::SOON;
+  return d;
+}
+
+// The old lead, to compare with: the sleep before a send aimed kSpinUs (5 ms) ahead of it, where it is kWakeLeadUs now.
+struct OldLead : FramePlanner {
+  explicit OldLead(int32_t latencyUs) : FramePlanner(latencyUs) {}
+  int32_t idleUs(time_t sec, int32_t usec) const {
+    const int32_t id = FramePlanner::idleUs(sec, usec), less = kSpinUs - kWakeLeadUs;
+    return id > less ? id - less : 0;
+  }
+};
+
+// The guard before each wake-up (light_sleep.h, kGuardUs and kGuardDiv) and the lead before a send
+// (FramePlanner::kWakeLeadUs), six hours at a time at 20 MHz with display_power = low, three seeds.  Without stalls:
+// no frame late, every send begun at its moment (a wake-up as late as the model has it comes before the lead), less
+// time awake and idle than with the old guard and lead, and less time from a wake-up to its send than with the new
+// guard and the old lead.  With stalls: no more late frames than with the old ones or without light sleep (the stalls
+// are what make them late).  Then a board that wakes later than the model: the same checks fail, and the firmware's
+// count of the naps shows it.
+void testLightSleepGuard() {
+  section("light sleep: the guard before each wake-up, and the lead before a send");
+  const int kSeconds = 6 * 3600;
+  const int32_t lpm = dispower::latencyUs(true, 20000);  // display_power = low and 20 MHz, as the owner runs it
+  const int64_t modelLate = modelLatestWakeUs(lightsleep::kMaxSleepUs) - lightsleep::kMaxSleepUs;
+  auto msPerSec = [](int64_t us, const SleepLoop &L) { return us / (L.totalUs / 1e6) / 1000.0; };
+  auto wakeToSendMs = [](const SleepLoop &L) { return L.wakeToSends ? L.wakeToSendUs / 1000.0 / L.wakeToSends : -1.0; };
+  int stalledLate = 0, stalledOldLate = 0, stalledOffLate = 0;
+  for (uint64_t seed : {31, 32, 33}) {
+    SleepLoop now, old, guardOnly;
+    now.latencyUs = old.latencyUs = guardOnly.latencyUs = lpm;
+    old.decide = decideOldGuard;
+    now.run(kSeconds, seed);
+    old.run<OldLead>(kSeconds, seed);
+    guardOnly.run<OldLead>(kSeconds, seed);
+    const double idleNow = msPerSec(now.idleUs, now), idleOld = msPerSec(old.idleUs, old);
+    const double awakeNow = msPerSec(now.idleUs + now.workUs, now), awakeOld = msPerSec(old.idleUs + old.workUs, old);
+    const double leadNow = wakeToSendMs(now), leadOld = wakeToSendMs(old), leadGuardOnly = wakeToSendMs(guardOnly);
+    printf("  seed %d: awake %.2f ms a second, %.2f of it idle (old guard and lead %.2f and %.2f); from a wake-up to its send %.2f ms"
+           " (%.2f, new guard alone %.2f); frames late %d of %d (%d), worst %.1f ms (%.1f ms); sends begun %.1f ms behind at worst;"
+           " naps woke up to %.2f ms after the time asked\n",
+           (int)seed, awakeNow, idleNow, awakeOld, idleOld, leadNow, leadOld, leadGuardOnly, now.late, now.frames, old.late,
+           now.worstLateUs / 1000.0, old.worstLateUs / 1000.0, now.worstSendBehindUs / 1000.0, now.napStats.worstLateWakeUs() / 1000.0);
+    CHECK(now.frames > kSeconds * 9 / 10 && now.sleeps > kSeconds * 9 / 10 && now.wakeToSends > kSeconds * 9 / 10);
+    CHECK(now.late == 0 && now.worstLateUs <= 30000 && now.worstSendBehindUs == 0);
+    CHECK(now.napStats.worstLateWakeUs() > 1000 && now.napStats.worstLateWakeUs() <= modelLate);
+    CHECK(old.late == 0 && old.worstSendBehindUs == 0);  // (the old ones were on time too: they only cost more)
+    CHECK(idleNow < idleOld - 5 && awakeNow < awakeOld - 5);  // (some 9 ms a second less, in this model)
+    // from a wake-up to its send: the guard's share (old guard and lead against the new guard alone) and the lead's
+    // (kSpinUs - kWakeLeadUs, 2 ms)
+    CHECK(leadGuardOnly < leadOld - 5 && leadNow < leadGuardOnly - 1.5 && leadNow > FramePlanner::kWakeLeadUs / 1000.0);
+    SleepLoop stalled, stalledOld, stalledOff;
+    stalled.latencyUs = stalledOld.latencyUs = stalledOff.latencyUs = lpm;
+    stalled.stallEverySec = stalledOld.stallEverySec = stalledOff.stallEverySec = 8;
+    stalledOld.decide = decideOldGuard;
+    stalledOff.lightSleep = false;
+    stalled.run(kSeconds, seed);
+    stalledOld.run<OldLead>(kSeconds, seed);
+    stalledOff.run(kSeconds, seed);
+    printf("    stalls every 8 s awake: frames late %d of %d (%d with the old guard and lead, %d without light sleep), worst %.0f ms (%.0f, %.0f)\n",
+           stalled.late, stalled.frames, stalledOld.late, stalledOff.late, stalled.worstLateUs / 1000.0, stalledOld.worstLateUs / 1000.0,
+           stalledOff.worstLateUs / 1000.0);
+    CHECK(stalled.late <= stalledOff.late);  // (how late the worst is, is down to the stalls: 20 to 300 ms, now and then two)
+    stalledLate += stalled.late;
+    stalledOldLate += stalledOld.late;
+    stalledOffLate += stalledOff.late;
+  }
+  printf("  with stalls, over the three seeds: %d frames late, %d with the old guard and lead, %d without light sleep\n", stalledLate,
+         stalledOldLate, stalledOffLate);
+  CHECK(stalledLate <= stalledOldLate);
+  // the checks can fail: 10 ms later than the model and the sends begin late (the guard covers the model's lateness,
+  // the lead 3 ms of the rest), 40 ms later and the frames are late; either way the count of the naps says so
+  for (int64_t lateUs : {10000, 40000}) {
+    SleepLoop slow;
+    slow.latencyUs = lpm;
+    slow.wakeLateUs = lateUs;
+    slow.run(kSeconds, 31);
+    printf("  waking %d ms later than modelled: frames late %d of %d, worst %.1f ms; sends begun %.1f ms behind at worst; naps woke up"
+           " to %.2f ms after the time asked\n",
+           (int)(lateUs / 1000), slow.late, slow.frames, slow.worstLateUs / 1000.0, slow.worstSendBehindUs / 1000.0,
+           slow.napStats.worstLateWakeUs() / 1000.0);
+    CHECK(slow.worstSendBehindUs > 0 && slow.napStats.worstLateWakeUs() > lateUs);
+    if (lateUs == 40000) CHECK(slow.late > 0);
+  }
+}
 
 void testLightSleepLoop() {
   section("light sleep: a simulated UI loop");
@@ -2639,9 +2915,11 @@ int main() {
   testFramePlanClock();
   testFramePlanIdle();
   testLightSleepDecide();
+  testLightSleepWake();
   testNapSteps();
   testWallFix();
   testLightSleepLoop();
+  testLightSleepGuard();
   testClockAnswer();
   testClockWait();
   testPostpone();

@@ -1236,9 +1236,10 @@ static void serviceSerial() {
         if (g_cfg.lightSleep) {  // (with the console on these stay at 0: the console keeps the chip awake)
           char row[lightsleep::kRow];
           lightsleep::formatRow(s_sleepStats.permille(esp_timer_get_time()), s_sleepWhy, row);
-          Serial.printf("light sleep: %s; %u naps, %u ended by a button, %u refused; time of day put right %u times, by up to %d us\n",
-                        row, (unsigned)s_sleepStats.naps(), (unsigned)s_sleepStats.buttonWakes(), (unsigned)s_sleepStats.refused(),
-                        (unsigned)s_wallFix.fixes(), (int)s_wallFix.largestUs());
+          Serial.printf("light sleep: %s; %u naps (woke up to %d us after the time asked), %u ended by a button, %u refused; time of day"
+                        " put right %u times, by up to %d us\n",
+                        row, (unsigned)s_sleepStats.naps(), (int)s_sleepStats.worstLateWakeUs(), (unsigned)s_sleepStats.buttonWakes(),
+                        (unsigned)s_sleepStats.refused(), (unsigned)s_wallFix.fixes(), (int)s_wallFix.largestUs());
         } else {
           Serial.println("light sleep: off (light_sleep = off)");
         }

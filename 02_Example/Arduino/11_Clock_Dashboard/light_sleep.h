@@ -24,8 +24,17 @@
 //   * a sleep the SDK refused less than kRetryMs ago (every try costs the calibration);
 //   * the next step of the frame planner (frame_plan.h, FramePlanner::idleUs()), or anything else that is due
 //     (a banner to take down), closer than kMinSleepUs.
-// The sleep ends kGuardUs (plus 1/128 of its length) before the first of those, so the loop finds things as they
-// would have been without it.  KEY and BOOT wake it at once (a low level on either pin).
+// The sleep ends kGuardUs (plus 1/kGuardDiv of its length) before the first of those, so the loop finds things as
+// they would have been without it.  KEY and BOOT wake it at once (a low level on either pin).
+//
+// Why the guard can be this small: the RC clock that times the sleep is calibrated against the crystal before every
+// sleep, and the simulation (tools/tests/test_radio.cpp) lets a sleep wake up to 2 ms late, give or take 0.2 % of its
+// length, which the guard covers by itself.  What a later wake costs: the sleep before a send is aimed
+// FramePlanner::kWakeLeadUs (3 ms) ahead of it (FramePlanner::idleUs()), and the loop spins what is left (SEND in
+// loop()), so up to 3 ms more still puts the frame out on time; past that the frame goes out late by the rest, which
+// the Frames line counts once it is more than 30 ms.  A banner or slow work does not need the millisecond.
+// Stats::worstLateWakeUs() keeps how much later than asked a nap woke at worst (the console's power command prints
+// it, though with the console on the chip does not sleep).  None of it has been measured on the board.
 //
 // Keeping time.  The chip's timer stands still while it sleeps, and the SDK puts it forward afterwards by the time
 // the RTC's slow clock counted: an RC oscillator inside the chip, calibrated against the crystal before every sleep.
@@ -47,7 +56,8 @@ namespace lightsleep {
 
 const int32_t kNever = INT32_MAX;       // "nothing due" for the times of Inputs
 const int32_t kMinSleepUs = 20000;      // a shorter sleep is not worth the way in and out (the SDK calibrates for ~4 ms)
-const int32_t kGuardUs = 5000;          // ... and every sleep ends this much early, plus 1/128 of its length
+const int32_t kGuardUs = 2000;          // ... and every sleep ends this much early, plus 1/kGuardDiv of its length
+const int32_t kGuardDiv = 500;          // (0.2 %: the RC clock's error over a sleep in the simulation, see above)
 const int32_t kMaxSleepUs = 2000000;    // never longer than this (the frames wake it every second anyway)
 const int64_t kWallStepUs = 2000;       // the time of day is corrected once the corrections add up to this
 const uint32_t kRetryMs = 1000;         // after the SDK refused a sleep, none is tried for this long
@@ -105,7 +115,7 @@ inline Decision decide(const Inputs &in) {
     if (in.workInUs < ahead) ahead = in.workInUs;
     if (in.otherInUs < ahead) ahead = in.otherInUs;
     if (ahead > kMaxSleepUs) ahead = kMaxSleepUs;
-    const int64_t us = ahead - kGuardUs - ahead / 128;
+    const int64_t us = ahead - kGuardUs - ahead / kGuardDiv;
     if (us < kMinSleepUs) {
       d.why = SOON;
     } else {
@@ -151,6 +161,7 @@ struct Nap {
   bool byButton = false;  // ... woken by KEY or BOOT rather than by the timer
   bool pressed = false;   // a button went down just before: no sleep at all (the loop answers it)
   int err = 0;            // what the SDK said when it would not sleep (0 = it did)
+  int32_t askedUs = 0;    // how long it was asked to take
   int64_t us = 0;         // how long it took by the chip's timer: asleep, and on the way in and out
   int64_t wallFixUs = 0;  // what was added to the time of day afterwards (WallFix)
 };
@@ -169,6 +180,7 @@ struct Nap {
 template <class Hw, class Fix>
 Nap napOnce(Hw &hw, Fix &fix, int32_t us) {
   Nap n;
+  n.askedUs = us;
   hw.wakeOnButtons(true);
   if (hw.buttonDown()) {
     hw.wakeOnButtons(false);
@@ -189,7 +201,8 @@ Nap napOnce(Hw &hw, Fix &fix, int32_t us) {
   return n;
 }
 
-// The share of the time spent asleep, since the loop first asked (the Power and settings page, the power log).
+// The share of the time spent asleep, since the loop first asked (the Power and settings page, the power log), and
+// how late the timer's wake-ups came.
 class Stats {
  public:
   void begin(int64_t nowUs) {
@@ -201,7 +214,11 @@ class Stats {
     if (n.slept) {
       asleepUs_ += n.us > 0 ? n.us : 0;
       naps_++;
-      if (n.byButton) buttonWakes_++;
+      if (n.byButton) {
+        buttonWakes_++;  // (ended early on purpose)
+      } else if (n.us - n.askedUs > worstLateWakeUs_) {
+        worstLateWakeUs_ = n.us - n.askedUs;
+      }
     } else if (n.err != 0) {
       refused_++;
     }
@@ -216,10 +233,13 @@ class Stats {
   uint32_t naps() const { return naps_; }
   uint32_t buttonWakes() const { return buttonWakes_; }
   uint32_t refused() const { return refused_; }
+  // The most a nap that the timer ended took beyond the time asked for (0: none did).  Past kGuardUs and 1/kGuardDiv
+  // of the length, the frame's own lead (FramePlanner::kWakeLeadUs) is what is left (see the top).
+  int64_t worstLateWakeUs() const { return worstLateWakeUs_; }
 
  private:
   bool begun_ = false;
-  int64_t sinceUs_ = 0, asleepUs_ = 0;
+  int64_t sinceUs_ = 0, asleepUs_ = 0, worstLateWakeUs_ = 0;
   uint32_t naps_ = 0, buttonWakes_ = 0, refused_ = 0;
 };
 

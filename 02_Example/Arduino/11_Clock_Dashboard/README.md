@@ -848,7 +848,13 @@ sleep itself (`light_sleep.h`, `power.cpp`).
 | a button that is down, pressed in the last 8 seconds, or pressed while the loop was busy and not answered yet | the clock times the clicks, and whoever pressed is waiting for the answer |
 | a redraw that is due, the cube, a restart | |
 | slow work that is due (the sensors, the battery, a line of the power log) | it runs first; if it has to wait for its part of the second, the sleep ends where that part begins |
-| the next frame, a banner to take down | the sleep ends 5 ms before them (and 1/128 of its length more), so the loop finds things as it would have without it |
+| the next frame, a banner to take down | the sleep ends 2 ms before them (and 0.2 % of its length more), so the loop finds things as it would have without it; the one before a send is aimed 3 ms ahead of it |
+
+**The guard and the lead.** The 2 ms and the 0.2 % cover the latest wake-up in the simulation (2 ms late, give or take
+0.2 % of the sleep), and the 3 ms before a send let a board that wakes up to 3 ms later than that still send on time;
+past that the second goes out late by the rest (the guard was 5 ms and 1/128 of the sleep and the lead 5 ms: in the
+simulation the chip was awake some 16 ms before every send, now about 6). **Neither has run on the board, and how late
+it really wakes has not been measured.**
 
 **What it should save** (an estimate; **nothing of it has been measured**). The owner measured on USB at 5 V, battery
 out, with `wifi_mode = sync`, `cpu_idle_mhz = 20`, `wifi_power_save = max` and the console off: **21.1 to 21.4 mA at the
@@ -859,13 +865,13 @@ radio off) the chip idles at 13.2 mA at 40 MHz and 22.0 at 80, works at 16.2 and
 sleep**; Espressif gives nothing below 40 MHz, so 20 MHz is drawn out along the same line (8.8 mA idle). A simulation of
 the loop (`tools/tests/test_radio.cpp`: the frames, the slow work, the power log, a press every ten minutes, a radio
 session every quarter of an hour; the sleep's way in and out costs 5 ms) gives, with one sleep a second (0.98 a
-second over the run; the old schedule had 1.97):
+second over the run; the old schedule had 2.02):
 
 | `cpu_idle_mhz` | Asleep | The chip, without light sleep | with it |
 | --- | --- | --- | --- |
-| 20 | 78 % of the time | 9.3 mA | 2.6 mA (2.8 with two sleeps a second) |
-| 40 | 87 % | 13.7 mA | 2.5 mA (2.6) |
-| 80 (`off`) | 91 % | 22.3 mA | 2.5 mA (2.9) |
+| 20 | 79 % of the time | 9.3 mA | 2.6 mA (2.7 with two sleeps a second) |
+| 40 | 88 % | 13.7 mA | 2.3 mA (2.5) |
+| 80 (`off`) | 92 % | 22.3 mA | 2.3 mA (2.6) |
 
 So with the owner's settings the chip should draw about 6.7 mA less at 3.3 V. The board turns the 5 V of USB into
 3.3 V (the charger's power path, then the buck-boost converter); at a guessed 85 % that is **about 5 mA less at 5 V:
@@ -897,8 +903,8 @@ time` (the share since the start), and when it is awake for a reason worth sayin
 `(now: console on)`, `(now: button pressed)` (for 8 seconds after any press, the one that brought you to the page
 included), `(now: busy)`, `(now: SDK refused)` (the SDK would not sleep; the clock tries again a second later). The
 [power log](#the-clocks-own-log) has the same share in its `asleep_pct` column. (`power` in the serial console prints
-the row too, with counts of the naps, but in a run with the console on they are all 0: the console keeps the chip
-awake.)
+the row too, with counts of the naps and how much later than asked a nap woke at worst, but in a run with the console
+on they are all 0: the console keeps the chip awake.)
 
 What has to be seen on the board before it can be on by default ([TESTING.md](TESTING.md), item 37): the current with
 it on and off, the *Frames* line (no more late frames than before), every button press still answered (KEY and BOOT are

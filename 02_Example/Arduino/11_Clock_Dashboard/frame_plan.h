@@ -8,10 +8,11 @@
 // into the display buffer a second ahead, straight after the one before it has been
 // sent, and sent just before it starts: the draw may run long by most of a second
 // without the digits changing late, and the send and the draw are one stretch of work,
-// so with light sleep (light_sleep.h) the chip wakes once a second.  The panel
-// refreshes itself at 25.5 Hz, so a frame shows up 0-39 ms after it has been sent
-// (0-125 ms at the 8 Hz of display_power = low, display_power.h); the send is timed to
-// end `latencyUs` before the second starts, which puts the average error at zero.
+// so with light sleep (light_sleep.h) the chip wakes once a second, kWakeLeadUs before
+// the send (idleUs()).  The panel refreshes itself at 25.5 Hz, so a frame shows up
+// 0-39 ms after it has been sent (0-125 ms at the 8 Hz of display_power = low,
+// display_power.h); the send is timed to end `latencyUs` before the second starts,
+// which puts the average error at zero.
 //
 // What the frame shows besides the time (the weather, the sensors, the battery) is
 // taken when it is drawn, so up to a second before it is on the glass; whatever has to
@@ -38,8 +39,9 @@ class FramePlanner {
     int32_t waitUs = 0;
   };
 
-  static constexpr int32_t kSpinUs = 5000;     // waits shorter than this are spun, longer ones slept
-  static constexpr int32_t kQuietUs = 300000;  // slow work only with more than this left before the send
+  static constexpr int32_t kSpinUs = 5000;      // waits shorter than this are spun, longer ones slept
+  static constexpr int32_t kWakeLeadUs = 3000;  // light sleep is aimed this far ahead of the send
+  static constexpr int32_t kQuietUs = 300000;   // slow work only with more than this left before the send
 
   explicit FramePlanner(int32_t latencyUs) : latencyUs_(latencyUs) {}
 
@@ -84,13 +86,15 @@ class FramePlanner {
     return st;
   }
 
-  // How long the loop may leave the planner alone (light_sleep.h): the time until next() asks for more than IDLE or
-  // SLEEP, if nothing is forced meanwhile.  That is the send of the prepared frame, once the wait is down to what is
-  // spun; 0 when it asks for something now (with no frame prepared it always does: PREPARE or DRAW_NOW).
+  // How long the loop may leave the planner alone (light_sleep.h), if nothing is forced meanwhile: until kWakeLeadUs
+  // before the send of the prepared frame; 0 when it asks for something now (with no frame prepared it always does:
+  // PREPARE or DRAW_NOW).  next() asks for nothing but IDLE or SLEEP until then, or for the SEND once the wait is
+  // down to kSpinUs: a sleep that wakes on time is spun into the send (SEND), one that wakes earlier naps a little
+  // more first (SLEEP), and one that wakes after the send's moment sends at once, late by that much.
   int32_t idleUs(time_t sec, int32_t usec) const {
     if (!prepared_ || preparedSec_ < sec || preparedSec_ > sec + 2) return 0;  // (a frame next() drops counts as none)
     const int32_t waitUs = untilSendUs(sec, usec);
-    return waitUs > kSpinUs ? waitUs - kSpinUs : 0;
+    return waitUs > kWakeLeadUs ? waitUs - kWakeLeadUs : 0;
   }
 
   // May slow work (I2C sensors, battery, a line of the power log) run now?  Never close to a send.  A prepared
