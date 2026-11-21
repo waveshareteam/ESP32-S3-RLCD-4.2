@@ -388,19 +388,30 @@ All six formats fit the date line in every month (checked on the rendered pixels
 
 The panel refreshes itself 25.5 times a second, so a frame shows up 0 to 39 ms after it has been sent (8 times and 0 to
 125 ms with `display_power = low`, see [The display's low power mode](#the-displays-low-power-mode)). The clock therefore
-draws the coming second into the display buffer ahead of time (with at least 60 ms to spare, more if drawing has been
-slow lately) and sends it just before the second starts, timed so the average error is zero (`DISPLAY_LATENCY_MS`).
-A slow draw cannot make the digits late any more, only the short transfer is exposed. `frame_plan.h` holds the
-schedule; in a simulation of the UI loop (not on the board) with one draw in ten taking four times as long, 148 of 1568
-frames went out more than 50 ms late with the earlier draw-just-in-time loop and none with this one, and with random
-20-300 ms stalls (a flash write, WiFi activity) the count fell from 234 to 50 of 3525. A stall of more than about
-150 ms still shows: nothing in software can hide a frozen CPU. **On the board, at 80 MHz, after a while: 1154 frames sent,
-0 late, worst 2 ms** (the *Frames* line of the Info page).
+draws each second into the display buffer a second ahead, straight after the one before it has been sent, and sends it
+just before the second starts, timed so the average error is zero (`DISPLAY_LATENCY_MS`). A slow draw cannot make the
+digits late, only the short transfer is exposed. (Until this change the draw was left until shortly before the send,
+with at least 60 ms to spare; now it has most of a second, and with [light sleep](#light-sleep) the chip wakes once a
+second instead of twice. **The new schedule has not run on the board yet.**) `frame_plan.h` holds the schedule; in a
+simulation of the UI loop (not on the board) with one draw in ten taking four times as long, 148 of 1568 frames went
+out more than 50 ms late with the earlier draw-just-in-time loop and none with this one, and with random 20-300 ms
+stalls (a flash write, WiFi activity) the count fell from 234 to 53 of 3552. A stall of more than about 150 ms still
+shows: nothing in software can hide a frozen CPU. **On the board, at 80 MHz, after a while: 1154 frames sent, 0 late,
+worst 2 ms** (the *Frames* line of the Info page, with the schedule before this change).
 
-Two things are also kept away from the moment of the tick: slow work (the sensor reads) only runs when more than 300 ms
-are left, and flash writes (saving a time zone or a Spotify token; the flash is only touched when the value changed)
-wait for the middle of a second, because a flash write stops both cores for a while. The WiFi status calls are made
-before the shared-state lock is taken, so a slow WiFi driver cannot hold the UI up.
+What a frame shows besides the time is taken when it is drawn, so a second before it is on the glass. What has to show
+at once forces a redraw: a button press and what it does (a page, the polarity, a banner), a banner from the network
+task (Spotify's answers), a banner coming down, the end of the cube. The rest waits for the next frame: the weather, the
+indoor reading, the battery (voltage, gauge, charging, the low warning), WiFi and its signal, the status line, what
+Spotify is playing, the figures on the info pages. Those show up to about two seconds after they change, where it was
+up to about one and a quarter before this change. A clock step (the hourly network time) that finds a frame waiting
+is caught: a frame for a second that is over, or one too far ahead, is dropped and the second it is now drawn at once.
+
+Two things are also kept away from the moment of the send: slow work (the sensor reads, a line of the power log) only
+runs when more than 300 ms are left before it (in practice right after the draw, early in the second), and flash writes
+(saving a time zone or a Spotify token; the flash is only touched when the value changed) wait for the middle of a
+second, because a flash write stops both cores for a while. The WiFi status calls are made before the shared-state lock
+is taken, so a slow WiFi driver cannot hold the UI up.
 
 **If the seconds still stutter now and then,** the Info page says where to look:
 
@@ -817,11 +828,16 @@ The block's own clock is left on: the SDK's check for a computer on the port kee
 ### Light sleep
 
 `light_sleep = on` (`#define LIGHT_SLEEP 1`) puts the processor into **light sleep between the frames**. With the radio
-off the clock has little to do in a second: it draws the coming second, sends it just before the tick, reads a sensor
-now and then. The rest of the second it used to spend idling awake, in naps of a few milliseconds; now it sleeps until
-the next thing is due, and KEY or BOOT wake it at once. The chip keeps its memory and the display its picture. **It is
-new in 1.11, off by default and has not run on a board yet.** The Arduino core has no automatic light sleep
-(`CONFIG_PM_ENABLE` is not set in core 3.3.8), so the clock asks for each sleep itself (`light_sleep.h`, `power.cpp`).
+off the clock has little to do in a second: it sends the second it drew a second ago just before the tick, draws the
+next one straight away, reads a sensor now and then. The rest of the second it used to spend idling awake, in naps of a
+few milliseconds; now it sleeps until the next thing is due, and KEY or BOOT wake it at once. That is **one sleep a
+second**, from the end of the draw (and of any slow work after it) to just before the next send. (Until the schedule
+was changed it was two: the draw was left until shortly before the send, so there was a sleep before the draw and a
+short one between the draw and the send, and every sleep costs about 5 ms awake on the way in and out. The new
+schedule has not run on the board either; see [Keeping the seconds on time](#keeping-the-seconds-on-time).) The chip
+keeps its memory and the display its picture. **It is new in 1.11, off by default and has not run on a board yet.**
+The Arduino core has no automatic light sleep (`CONFIG_PM_ENABLE` is not set in core 3.3.8), so the clock asks for each
+sleep itself (`light_sleep.h`, `power.cpp`).
 
 **When it sleeps.** Only when nothing needs the chip awake:
 
@@ -842,15 +858,16 @@ of the time, so the idle clock is nearly all of the energy. By the
 radio off) the chip idles at 13.2 mA at 40 MHz and 22.0 at 80, works at 16.2 and 28.4, and draws **0.24 mA in light
 sleep**; Espressif gives nothing below 40 MHz, so 20 MHz is drawn out along the same line (8.8 mA idle). A simulation of
 the loop (`tools/tests/test_radio.cpp`: the frames, the slow work, the power log, a press every ten minutes, a radio
-session every quarter of an hour; the sleep's way in and out costs 5 ms) gives:
+session every quarter of an hour; the sleep's way in and out costs 5 ms) gives, with one sleep a second (0.98 a
+second over the run; the old schedule had 1.97):
 
 | `cpu_idle_mhz` | Asleep | The chip, without light sleep | with it |
 | --- | --- | --- | --- |
-| 20 | 76 % of the time | 9.3 mA | 2.8 mA |
-| 40 | 85 % | 13.7 mA | 2.6 mA |
-| 80 (`off`) | 90 % | 22.3 mA | 2.9 mA |
+| 20 | 78 % of the time | 9.3 mA | 2.6 mA (2.8 with two sleeps a second) |
+| 40 | 87 % | 13.7 mA | 2.5 mA (2.6) |
+| 80 (`off`) | 91 % | 22.3 mA | 2.5 mA (2.9) |
 
-So with the owner's settings the chip should draw about 6.5 mA less at 3.3 V. The board turns the 5 V of USB into
+So with the owner's settings the chip should draw about 6.7 mA less at 3.3 V. The board turns the 5 V of USB into
 3.3 V (the charger's power path, then the buck-boost converter); at a guessed 85 % that is **about 5 mA less at 5 V:
 from 21.2 mA to about 16**. The owner's own two readings point a little higher: 80 MHz against 20 MHz differ by 7.8 mA
 at 5 V, where the datasheet's straight line says 10, which would mean the chip at 20 MHz draws more than 8.8 mA, and then
@@ -916,9 +933,9 @@ it, 0 to 39 ms after it was sent at 25.5 Hz and 0 to 125 ms at 8 Hz. The clock s
 that, so that the error is zero on average ([Keeping the seconds on time](#keeping-the-seconds-on-time)); in the low
 power mode it sends them 43 ms earlier still. The seconds then change up to about 63 ms before or after the real second
 instead of 20, and where in that span they land wanders slowly, because the controller refreshes by its own oscillator.
-In a simulation of the loop with the panel's refresh modelled (`tools/tests/test_logic.cpp`) they came out 1 ms early
-on average, from 64 ms early to 63 late; timed as before, at 8 Hz they would have been 43 ms late on average and up to
-107. A slower rate would save more and put the seconds a quarter of a second or more off, which is why 8 Hz is the only
+In a simulation of the loop with the panel's refresh modelled (`tools/tests/test_logic.cpp`) they came out 0.1 ms late
+on average, from 64 ms early to 64 late; timed as before, at 8 Hz they would have been 43 ms late on average and up to
+108. A slower rate would save more and put the seconds a quarter of a second or more off, which is why 8 Hz is the only
 one on offer. A button press or a page change takes up to 125 ms to show instead of 39.
 
 **What it might save** (a guess; **none of it is measured**). A refresh drives every column of the panel once for each
@@ -1258,7 +1275,7 @@ October showed, is in [TESTING.md](TESTING.md).
 | `drift.h`, `moon.h`, `datefmt.h` | Clock accuracy measurement, moon phase and its glyph, date formats |
 | `wifi_pick.h` | Which WiFi network to try next (main, backup) and when to look for the main one again |
 | `fw_logic.h`, `fw_update.h/.cpp` | Firmware update from the SD card: which file is accepted and the two passes over it, check then write (pure logic, host-tested), and the card, flash and trial minute |
-| `frame_plan.h` | When to draw the coming second and when to send it |
+| `frame_plan.h` | When to draw each second (a second ahead) and when to send it |
 | `display_power.h` | `display_power`: the controller's two refresh rates, the datasheet's way from one to the other, how much later a frame shows in the low power mode (pure logic, host-tested) |
 | `ST7305_U8g2.*` | Display driver, derived from `10_U8G2_Test` with an inversion option and the low power mode |
 | `app_state.*`, `app_model.h` | Data shared between the two cores |

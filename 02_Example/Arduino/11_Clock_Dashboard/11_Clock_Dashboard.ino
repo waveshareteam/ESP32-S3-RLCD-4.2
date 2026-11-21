@@ -81,9 +81,11 @@ static UiPage s_page = PAGE_DASHBOARD;
 static bool s_forceRedraw = true;
 static bool s_flipPolarity = false;  // user toggled the screen polarity (XOR with config)
 
-// Frame pipeline.  The coming second is drawn into the display buffer early (prepareFrame) and
-// sent just before it starts (flushFrame), so a slow draw cannot make the digits late; the
-// planner (frame_plan.h) decides when.
+// Frame pipeline.  Each second is drawn into the display buffer a second ahead (prepareFrame), straight
+// after the one before it has gone out, and sent just before it starts (flushFrame), so a slow draw cannot
+// make the digits late; the planner (frame_plan.h) decides when.  The send and the draw are separate turns
+// of the loop, so a button is still looked at between them.  The prepared frame sits in the buffer for most
+// of a second: whatever else draws there (the cube) tells the planner, or forces a redraw after it.
 static FramePlanner s_planner(DISPLAY_LATENCY_MS * 1000);
 static uint32_t s_lastFrameMs = 0;
 
@@ -246,6 +248,7 @@ static void displayRest() {
 
 static void cubeBegin(uint32_t nowMs) {
   s_cubeOn = true;
+  s_planner.discard();  // the cube draws over the frame that waits in the buffer (cubeEnd forces a fresh one)
   applyDisplayPower();
   s_cube.seed = esp_random() | 1u;  // it tumbles another way every time
   s_cube.turnMs = 0;
@@ -1336,7 +1339,8 @@ static void lowBatteryGate() {
 
 // The CPU clock.  The display driver holds the SPI bus for good and the core waits for every SPI bus when
 // the clock changes, so the driver lets go for the moment.  A frame takes longer to draw at a lower clock,
-// so the frame planner is told (the first frame after the switch is planned with the new costs).
+// so the frame planner is told (a frame that is prepared goes out with the new send cost, the next one is
+// drawn with the new costs).
 static void applyClock(int mhz) {
   const int from = (int)getCpuFrequencyMhz();
   if (from == mhz || mhz == s_clockRefusedMhz) return;
@@ -1421,7 +1425,8 @@ static void serviceClock(uint32_t nowMs, int32_t usec) {
 }
 
 // Is slow work due (readSlowSensors(), servicePowerLog()), and when can it run: 0 = now, lightsleep::kNever = none is due.
-// Each kind has its part of the second, and each part begins at the tick.
+// Each kind has its part of the second (the sensors while the planner is quiet, after the draw and until 300 ms before
+// the send; the log early in the second), and when it has to wait, the wait is to the tick: the send comes before it.
 static int32_t slowWorkInUs(uint32_t nowMs, int32_t usec) {
   const int32_t toTick = 1000000 - usec;
   int32_t in = lightsleep::kNever;
@@ -1657,8 +1662,8 @@ void loop() {
     case FramePlanner::SLEEP:
       if (!lightSleepStep()) delay(step.waitUs > 12000 ? 4 : 1);  // short naps, so the buttons keep being polled
       break;
-    default:
-      if (s_planner.quiet((int32_t)tv.tv_usec)) readSlowSensors(nowMs);  // never close to a tick
+    default:  // IDLE: the next frame is drawn and its send is far off
+      if (s_planner.quiet((int32_t)tv.tv_usec)) readSlowSensors(nowMs);  // never close to a send
       servicePowerLog((int32_t)tv.tv_usec);                               // (nor this: only early in a second)
       if (!lightSleepStep()) delay(4);
       break;

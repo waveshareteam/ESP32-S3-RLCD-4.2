@@ -1094,39 +1094,148 @@ struct LoopSim {
     return want > last;
   }
 };
+
+// A loop with fixed costs: a draw and a send take what the planner expects at `mhz` (30 and 15 ms at 80 MHz, 80 / mhz
+// times as much below), it naps a millisecond between the steps (as the loop does while the radio is on, which is when
+// the clock gets stepped), and it keeps what went on the glass when, by the clock the planner sees.  For the steps of
+// the clock and the forced redraws while a frame waits in the buffer.
+template <class Plan>
+struct FixedLoop {
+  struct OnGlass {
+    int64_t at;  // on the glass from then: the send over, and the panel's time to the glass
+    int64_t sec;
+    bool scheduled;
+  };
+  Plan p;
+  int64_t t = 1000000LL * 1000000LL + 250000;
+  uint32_t draw, send;
+  std::vector<OnGlass> glass;
+
+  explicit FixedLoop(int mhz) : p(20000), draw(30000u * 80 / (uint32_t)mhz), send(15000u * 80 / (uint32_t)mhz) {
+    p.clockChanged(80, (uint32_t)mhz);
+  }
+  int32_t usec() const { return (int32_t)(t % 1000000); }
+  void out() {
+    t += send;
+    glass.push_back({t + p.latencyUs(), (int64_t)p.preparedSec(), p.preparedScheduled()});
+    p.sent(send);
+  }
+  void turn(bool force = false) {
+    const FramePlanner::Step st = p.next((time_t)(t / 1000000), usec(), force);
+    switch (st.action) {
+      case FramePlanner::DRAW_NOW: t += draw; p.drew(st.sec, draw, false); out(); break;
+      case FramePlanner::PREPARE: t += draw; p.drew(st.sec, draw, true); break;
+      case FramePlanner::SEND: t += st.waitUs; out(); break;
+      default: t += 1000; break;
+    }
+  }
+  // On to the first moment at least `usec` into a second at which a frame waits, after `settleUs`.
+  bool waitForPrepared(int32_t atUsec, int64_t settleUs) {
+    const int64_t from = t + settleUs, giveUp = from + 10000000;
+    while (t < from || !p.prepared() || usec() < atUsec) {
+      if (t > giveUp) return false;
+      turn();
+    }
+    return true;
+  }
+  // The longest stretch from `from` to `to` in which the glass shows another second than the clock: `shown` is what it
+  // showed at `from`, and the entries of `glass` from `first` on are what went on it after that.
+  int64_t longestWrong(int64_t from, int64_t to, int64_t shown, size_t first) const {
+    int64_t longest = 0, wrongSince = -1;
+    size_t i = first;
+    for (int64_t at = from; at < to; at += 1000) {
+      while (i < glass.size() && glass[i].at <= at) shown = glass[i++].sec;
+      if (shown == at / 1000000) {
+        wrongSince = -1;
+      } else {
+        if (wrongSince < 0) wrongSince = at;
+        if (at + 1000 - wrongSince > longest) longest = at + 1000 - wrongSince;
+      }
+    }
+    return longest;
+  }
+  // Scheduled frames from `first` on that went on the glass more than 2 ms off the start of their second, from `after` on.
+  int offTime(size_t first, int64_t after) const {
+    int n = 0;
+    for (size_t i = first; i < glass.size(); i++) {
+      const int64_t err = glass[i].at - glass[i].sec * 1000000;
+      if (glass[i].scheduled && glass[i].at > after && (err > 2000 || err < -2000)) n++;
+    }
+    return n;
+  }
+};
+
+// For the negative control: a planner that keeps a frame it prepared whatever the clock does (FramePlanner drops one for
+// a second that is over, or for one more than two ahead) and sends it when its own time comes.
+struct KeepStale : FramePlanner {
+  explicit KeepStale(int32_t latencyUs) : FramePlanner(latencyUs) {}
+  Step next(time_t sec, int32_t usec, bool force) {
+    if (!force && prepared() && (preparedSec() < sec || preparedSec() > sec + 2)) {
+      const int64_t wait = (int64_t)(preparedSec() - sec - 1) * 1000000 + (1000000 - usec) - (int64_t)sendCostUs() - latencyUs();
+      Step st;
+      st.action = wait > kSpinUs ? SLEEP : SEND;
+      st.waitUs = wait > kSpinUs ? (int32_t)wait : (wait > 0 ? (int32_t)wait : 0);
+      return st;
+    }
+    return FramePlanner::next(sec, usec, force);
+  }
+};
+
+// The clock is stepped by `stepUs` 400 ms into a second, with a frame waiting; then six seconds more.  The longest
+// stretch with a wrong second on the glass after the step, and (`offTimeOut`) how many frames from two seconds after
+// it on were not on time.
+template <class Plan>
+int64_t wrongAfterStep(int mhz, int64_t stepUs, int *offTimeOut) {
+  FixedLoop<Plan> L(mhz);
+  if (!L.waitForPrepared(400000, 5000000)) return -1;
+  const int64_t shown = L.glass.back().sec;
+  const size_t first = L.glass.size();
+  L.t += stepUs;
+  const int64_t from = L.t, to = from + 6000000;
+  while (L.t < to) L.turn();
+  if (offTimeOut) *offTimeOut = L.offTime(first, from + 2000000);
+  return L.longestWrong(from, to, shown, first);
+}
 }  // namespace
 
 static void testFramePlan() {
   section("frame scheduling");
   using P = FramePlanner;
 
-  {  // quiet(): slow work only with plenty of time before the tick and nothing waiting to be sent
+  {  // quiet(): slow work only with plenty of time before the send (after 1.12 also while a frame waits for it, which
+     // it now does for most of a second: until then nothing was quiet while one was prepared)
     P p(20000);
     CHECK(p.quiet(100000));
-    CHECK(!p.quiet(800000));  // 200 ms to the tick
+    CHECK(!p.quiet(800000));  // nothing prepared: 200 ms to the tick
     p.drew(100, 30000, true);
-    CHECK(!p.quiet(100000));
+    CHECK(p.quiet(100000) && p.quiet(600000));     // sent 35 ms before the tick: 865 and 365 ms away
+    CHECK(!p.quiet(700000) && !p.quiet(990000));  // 265 ms away, and (at 80 MHz, the draw over before the tick) to the tick
     p.sent(15000);
     CHECK(p.quiet(100000));
   }
-  {  // the decisions at a few moments, with the default costs (send lead 35 ms, draw lead 125 ms)
+  {  // the decisions at a few moments, with the default costs (send lead 35 ms).  After 1.12 the next second is drawn
+     // straight after a send, a second ahead, where it used to wait until 125 ms before its tick
     P p(20000);
     p.drew(500, 30000, false);
     p.sent(15000);  // the frame for second 500 is on the glass
-    P::Step s = p.next(500, 400000, false);
-    CHECK(s.action == P::IDLE);
-    s = p.next(500, 880000, false);  // 120 ms to the tick: time to draw the next second
+    P::Step s = p.next(500, 400000, false);  // the next one at once
     CHECK(s.action == P::PREPARE && s.sec == 501);
     p.drew(501, 30000, true);
+    s = p.next(500, 430000, false);  // due in 535 ms: slow work may run
+    CHECK(s.action == P::IDLE && s.waitUs == 535000);
     s = p.next(500, 890000, false);  // 110 ms left, due in 75 ms: sleep
-    CHECK(s.action == P::SLEEP);
+    CHECK(s.action == P::SLEEP && s.waitUs == 75000);
     s = p.next(500, 960000, false);  // 40 ms left, due in 5 ms: send after a short wait
     CHECK(s.action == P::SEND && s.waitUs > 0 && s.waitUs <= 5000);
     p.sent(15000);
-    s = p.next(500, 990000, false);
-    CHECK(s.action == P::IDLE);
-    s = p.next(501, 100000, false);  // the second has begun and it was shown: nothing to do
-    CHECK(s.action == P::IDLE);
+    s = p.next(500, 980000, false);  // 501 is out: the one after it, straight away
+    CHECK(s.action == P::PREPARE && s.sec == 502);
+    p.drew(502, 30000, true);
+    s = p.next(500, 995000, false);  // drawn before the tick (as at 80 MHz): due in a second and 5 ms less the lead
+    CHECK(s.action == P::SLEEP && s.waitUs == 970000);
+    s = p.next(501, 10000, false);  // the second has begun and it was shown: slow work, the send 955 ms away
+    CHECK(s.action == P::IDLE && s.waitUs == 955000);
+    CHECK(p.idleUs(501, 10000) == 955000 - P::kSpinUs && p.idleUs(500, 995000) == 970000 - P::kSpinUs);
   }
   {  // a forced redraw is immediate, and in the last ~110 ms before a tick it shows the second about to start
     P p(20000);
@@ -1163,6 +1272,24 @@ static void testFramePlan() {
     s = q.next(450, 100000, false);  // the clock jumped back by 50 seconds
     CHECK(!q.prepared());
     CHECK(s.action == P::DRAW_NOW && s.sec == 450);
+    // a frame waits for most of a second now, so a step of the clock (the hourly time sync) is likely to find one:
+    // two seconds ahead is kept (a draw over before the tick), three is not; one for a second that is over is dropped
+    // too, so that the second it is now goes out first and not an old one
+    P r(20000);
+    r.drew(501, 30000, false);
+    r.sent(15000);  // 501 went out 35 ms before its tick ...
+    r.drew(502, 30000, true);  // ... and 502 is drawn before it
+    s = r.next(500, 990000, false);
+    CHECK(s.action == P::SLEEP && s.waitUs == 975000 && r.prepared() && r.idleUs(500, 990000) == 970000);
+    s = r.next(499, 990000, false);  // back by a second
+    CHECK(!r.prepared() && s.action == P::DRAW_NOW && s.sec == 499);
+    P f(20000);
+    f.drew(500, 30000, false);
+    f.sent(15000);
+    f.drew(501, 30000, true);
+    CHECK(f.idleUs(502, 300000) == 0);  // (a frame next() drops is no reason to sleep)
+    s = f.next(502, 300000, false);     // forward by a second and more
+    CHECK(!f.prepared() && s.action == P::DRAW_NOW && s.sec == 502);
   }
   {  // one freak cost does not move the schedule much
     P p(20000);
@@ -1282,6 +1409,53 @@ static void testFramePlan() {
     CHECK(framesAfterRecovery > 100);
     CHECK(wrongAfterRecovery == 0);
   }
+  {  // After 1.12 a frame waits in the buffer for most of a second, so a step of the clock (the hourly time sync: the radio
+     // is on and the loop awake) is likely to find one.  By half a second or three, either way, at 80 MHz and at 20: the
+     // glass shows a wrong second only until the planner has caught up, never for a whole second, and the seconds after
+     // it are on time.  A planner that kept the frame it had would show a wrong one for seconds (the check can fail).
+    int64_t worst = 0;
+    int off = 0;
+    for (int mhz : {80, 20}) {
+      for (int64_t step : {500000LL, -500000LL, 3000000LL, -3000000LL}) {
+        int o = -1;
+        const int64_t wrong = wrongAfterStep<FramePlanner>(mhz, step, &o);
+        CHECK(wrong >= 0 && wrong < 1000000 && o == 0);
+        if (wrong > worst) worst = wrong;
+        off += o;
+      }
+    }
+    const int64_t kept = wrongAfterStep<KeepStale>(80, -3000000, nullptr);
+    printf("  clock steps of 0.5 and 3 s with a frame waiting: a wrong second on the glass for %.0f ms at worst (%.0f ms when the"
+           " frame is kept)\n",
+           worst / 1000.0, kept / 1000.0);
+    CHECK(kept > 2000000);
+  }
+  {  // A forced redraw (a press, a banner) while a frame waits, at every 50 ms of the second: it shows the second it is
+     // (in the last stretch before the tick the one about to start, as in 1.12), every second after it is shown,
+     // and each goes out on time
+    for (int mhz : {80, 20}) {
+      int runs = 0, wrongSec = 0, gaps = 0, offTime = 0;
+      for (int32_t at = 50000; at <= 900000; at += 50000) {
+        FixedLoop<FramePlanner> L(mhz);
+        if (!L.waitForPrepared(at, 3000000)) continue;
+        const int64_t sec = L.t / 1000000;
+        const int32_t usToNext = 1000000 - L.usec();
+        const size_t first = L.glass.size();
+        L.turn(true);
+        runs++;
+        const int64_t want = usToNext <= 2 * (int32_t)(L.draw + L.send) + L.p.latencyUs() ? sec + 1 : sec;
+        if (L.glass.size() != first + 1 || L.glass[first].sec != want || L.glass[first].scheduled) wrongSec++;
+        if (usToNext >= 500000 && want != sec) wrongSec++;  // (in the first half of a second, the second it is, at either clock)
+        const int64_t end = L.t + 4000000;
+        while (L.t < end) L.turn();
+        for (size_t i = first + 1; i < L.glass.size(); i++) gaps += L.glass[i].sec != L.glass[i - 1].sec + 1;
+        offTime += L.offTime(first + 1, 0);
+        if (L.glass.size() < first + 4) gaps++;
+      }
+      if (wrongSec || gaps || offTime) printf("  forced redraws at %d MHz: %d wrong, %d gaps, %d off time\n", mhz, wrongSec, gaps, offTime);
+      CHECK(runs == 18 && wrongSec == 0 && gaps == 0 && offTime == 0);
+    }
+  }
 }
 
 // display_power (display_power.h): the panel's two refresh rates, the switch between them, and when a second is on
@@ -1318,13 +1492,17 @@ static void testFramePlanPanel() {
     s = p.next(500, 900000, false);  // (from 100 ms before the tick: 22 ms to wait)
     CHECK(s.action == P::SLEEP && s.waitUs > 21000 && s.waitUs < 23000);
   }
-  {  // ... and the next second is drawn earlier: 168 ms ahead instead of 125
+  {  // ... and slow work stops 43 ms earlier before it.  (Up to 1.12 the next second was also drawn 43 ms earlier, 168 ms
+     // ahead instead of 125; it is drawn a second ahead now, whatever the figure.)
     P p(dispower::latencyUs(true, 20000));
     p.drew(500, 30000, false);
     p.sent(15000);
-    CHECK(p.next(500, 820000, false).action == P::IDLE);
-    P::Step s = p.next(500, 840000, false);
+    P::Step s = p.next(500, 300000, false);
     CHECK(s.action == P::PREPARE && s.sec == 501);
+    p.drew(501, 30000, true);
+    CHECK(p.next(500, 600000, false).action == P::IDLE);  // sent 78 ms ahead: 322 ms away
+    s = p.next(500, 640000, false);                       // 282 ms away
+    CHECK(s.action == P::SLEEP && s.waitUs == 360000 - 15000 - p.latencyUs());
   }
 
   // Simulated loops (LoopSim, no stalls or slow draws: those are the tests above), the panel's oscillator off by up

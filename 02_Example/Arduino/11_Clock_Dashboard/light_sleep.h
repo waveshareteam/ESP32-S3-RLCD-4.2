@@ -2,13 +2,14 @@
 
 // Light sleep between the frames (light_sleep = on).
 //
-// With the radio off the clock has little to do in a second: it draws the coming second, sends it just before the
-// tick and waits for the next one.  Without this, the wait is spent idling awake, in naps of a few milliseconds, and
-// at 20 MHz the chip alone then draws some 9 to 12 mA (Espressif gives 13.2 mA at 40 MHz and nothing lower).  In light
-// sleep it draws about a quarter of a milliamp and keeps its memory and the settings of its peripherals (the display
-// keeps its picture by itself).  So when nothing needs the chip awake, the loop sleeps until the next thing it has to
-// do instead of napping.  The Arduino core has no automatic light sleep (CONFIG_PM_ENABLE is not set), so the loop
-// asks for each one itself.
+// With the radio off the clock has little to do in a second: it sends the frame it drew a second ago just before the
+// tick, draws the next one straight away (frame_plan.h), reads a sensor now and then, and waits for the next send.
+// Without this, the wait is spent idling awake, in naps of a few milliseconds, and at 20 MHz the chip alone then draws
+// some 9 to 12 mA (Espressif gives 13.2 mA at 40 MHz and nothing lower).  In light sleep it draws about a quarter of a
+// milliamp and keeps its memory and the settings of its peripherals (the display keeps its picture by itself).  So
+// when nothing needs the chip awake, the loop sleeps until the next thing it has to do instead of napping: one sleep
+// a second, from after the draw to just before the send.  The Arduino core has no automatic light sleep
+// (CONFIG_PM_ENABLE is not set), so the loop asks for each one itself.
 //
 // What keeps it awake (decide()):
 //   * the radio, on or about to be: WiFi cannot sleep like this (wifi_mode = always never sleeps);

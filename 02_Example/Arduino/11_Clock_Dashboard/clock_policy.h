@@ -37,8 +37,9 @@ inline int target(const Needs &n, int workMhz, int idleMhz) {
   return (n.radio || n.usbHost || n.poked) ? workMhz : idleMhz;
 }
 
-// May the clock change now?  Up at once (something is waiting for it); down only between frames, when
-// nothing is drawn or waiting to be sent, so that no frame is planned with the old costs.
+// May the clock change now?  Up at once (something is waiting for it); down only when the frame planner is
+// quiet (frame_plan.h): no frame is being drawn, and the send of the one that waits is far enough off for it to
+// go out with the send cost of the new clock.
 inline bool mayChange(int currentMhz, int targetMhz, bool quiet) {
   if (targetMhz == currentMhz) return false;
   return targetMhz > currentMhz || quiet;

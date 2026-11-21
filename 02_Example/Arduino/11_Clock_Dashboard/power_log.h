@@ -45,8 +45,8 @@ const uint32_t kFirstSec = 10;             // ... and one this long after a star
 const uint32_t kMaxBytes = 1024 * 1024;    // the two files together never hold more
 const int kMaxFailures = 3;                // writes in a row that may fail before the log gives up for this run
 const size_t kMaxLine = 512;               // a line, or the heading, with its line end and a terminator
-// A write takes a tenth of a second or a few, and has to be over before the coming second is drawn
-// (frame_plan.h): it only starts this early in a second.
+// A write takes a tenth of a second or a few, and has to be over before the coming second is sent
+// (frame_plan.h; it is drawn by then): it only starts this early in a second.
 const int32_t kLatestStartUs = 200000;
 
 const char *const kFile = "powerlog.csv";     // the newest lines

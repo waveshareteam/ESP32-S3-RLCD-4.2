@@ -1213,6 +1213,61 @@ void testFramePlanClock() {
   printf("  (%d of %d frames late around the two clock changes)\n", lateFrames, frames);
   CHECK(frames > 250);
   CHECK(lateFrames <= 2);  // a frame or two at the moment of a switch is what it costs; the rest is on time
+
+  // After 1.12 a frame is prepared for most of a second, so the clock mostly changes while one waits to be sent: up at
+  // once, down only when the planner is quiet (clock_policy.h).  The send cost is what scales for that frame; it still
+  // goes out on time, and so does every one after it.  The clock wants the other speed every 3.7 s, so the switches
+  // land all over the second.
+  {
+    FramePlanner q(20000);
+    int64_t tq = 0;
+    int m = 80, switches = 0, whilePrepared = 0, late = 0, sent = 0;
+    int64_t worst = 0;
+    auto costAt = [&](int64_t us) { return m == 80 ? us : us * 4; };
+    while (tq < end) {
+      const time_t sec = (time_t)(tq / 1000000);
+      const int32_t usec = (int32_t)(tq % 1000000);
+      const int want = (tq / 3700000) % 2 ? 20 : 80;
+      if (clockpolicy::mayChange(m, want, q.quiet(usec))) {
+        whilePrepared += q.prepared();
+        q.clockChanged((uint32_t)m, (uint32_t)want);
+        m = want;
+        switches++;
+      }
+      const FramePlanner::Step st = q.next(sec, usec, false);
+      switch (st.action) {
+        case FramePlanner::DRAW_NOW:
+          tq += costAt(30000);
+          q.drew(st.sec, (uint32_t)costAt(30000), false);
+          tq += costAt(15000);
+          q.sent((uint32_t)costAt(15000));
+          break;
+        case FramePlanner::PREPARE:
+          tq += costAt(30000);
+          q.drew(st.sec, (uint32_t)costAt(30000), true);
+          break;
+        case FramePlanner::SEND: {
+          tq += st.waitUs + costAt(15000);
+          const int64_t err = tq + 20000 - (int64_t)q.preparedSec() * 1000000LL;  // on the glass less the start of its second
+          if (q.preparedScheduled() && sec > 5) {
+            sent++;
+            if (err > 30000) late++;
+            if (err > worst) worst = err;
+            if (-err > worst) worst = -err;
+          }
+          q.sent((uint32_t)costAt(15000));
+          break;
+        }
+        default:
+          tq += 4000;
+          break;
+      }
+    }
+    printf("  %d clock changes, %d of them with a frame waiting: %d of %d frames late, the worst %.1f ms off\n", switches, whilePrepared,
+           late, sent, worst / 1000.0);
+    CHECK(sent > 280 && switches > 70 && whilePrepared > switches * 9 / 10);
+    CHECK(late == 0 && worst <= 5000);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1313,27 +1368,44 @@ void testFramePlanIdle() {
     if (misses) printf("  display_power = low%s: %d of %d probes miss\n", halfway ? ", switched half-way" : "", misses, probes);
     CHECK(misses == 0 && probes > 20000);
   }
-  // the probes can fail: three ways of getting it wrong, each caught
+  {  // ... and at 80 MHz, where the draw is then over before the tick, so the frame waits for the second after next
+    int probes = 0;
+    const int misses = idleMisses(real, 80, 6, &probes, dispower::latencyUs(true, 20000));
+    if (misses) printf("  display_power = low, 80 MHz: %d of %d probes miss\n", misses, probes);
+    CHECK(misses == 0 && probes > 20000);
+  }
+  // the probes can fail: four ways of getting it wrong, each caught.  (Up to 1.12 the planner waited before it drew the
+  // next second, and two of these were about that wait; the next second is drawn at once now, so they are about the
+  // wait before the send.)
   auto noSpin = [](const FramePlanner &p, time_t s, int32_t u) {  // the send that is spun counted as idle time
     const int32_t id = p.idleUs(s, u);
     return p.prepared() && id > 0 ? id + FramePlanner::kSpinUs : id;
   };
-  auto outAlready = [](const FramePlanner &p, time_t s, int32_t u) {  // the second that is out already taken for the next
-    if (!p.prepared() && p.lastSentSec() == s + 1) {
-      const int32_t lead = (int32_t)(p.sendCostUs() + p.drawCostUs()) + p.latencyUs() + FramePlanner::kMarginUs;
-      return 1000000 - u > lead ? 1000000 - u - lead : 0;
+  auto waitToDraw = [](const FramePlanner &p, time_t s, int32_t u) {  // the wait before the draw that there was up to 1.12
+    if (!p.prepared() && (p.lastSentSec() == s || p.lastSentSec() == s + 1)) {
+      const int32_t lead = (int32_t)(p.sendCostUs() + p.drawCostUs()) + p.latencyUs() + 60000;
+      const int32_t until = (p.lastSentSec() == s + 1 ? 1000000 : 0) + 1000000 - u - lead;
+      return until > 0 ? until : 0;
     }
     return p.idleUs(s, u);
   };
-  auto fixedCost = [](const FramePlanner &p, time_t s, int32_t u) {  // the costs of 80 MHz, whatever the clock
-    if (!p.prepared() && p.lastSentSec() == s) {
-      const int32_t lead = 15000 + p.latencyUs() + 30000 + FramePlanner::kMarginUs;
-      return 1000000 - u > lead ? 1000000 - u - lead : 0;
+  auto comingOnly = [](const FramePlanner &p, time_t s, int32_t u) {  // a frame two seconds ahead taken for the coming one
+    if (p.prepared() && p.preparedSec() == s + 2) {
+      const int32_t w = 1000000 - u - (int32_t)p.sendCostUs() - p.latencyUs();
+      return w > FramePlanner::kSpinUs ? w - FramePlanner::kSpinUs : 0;
+    }
+    return p.idleUs(s, u);
+  };
+  auto fixedCost = [](const FramePlanner &p, time_t s, int32_t u) {  // the send cost of 80 MHz, whatever the clock
+    if (p.prepared() && p.preparedSec() >= s && p.preparedSec() <= s + 2) {
+      const int32_t w = (int32_t)(p.preparedSec() - s - 1) * 1000000 + 1000000 - u - 15000 - p.latencyUs();
+      return w > FramePlanner::kSpinUs ? w - FramePlanner::kSpinUs : 0;
     }
     return p.idleUs(s, u);
   };
   CHECK(idleMisses(noSpin, 80, 3) > 100);
-  CHECK(idleMisses(outAlready, 80, 3) > 100);
+  CHECK(idleMisses(waitToDraw, 20, 3) > 100);
+  CHECK(idleMisses(comingOnly, 80, 3, nullptr, dispower::latencyUs(true, 20000)) > 100);  // (there the draw is over before the tick)
   CHECK(idleMisses(fixedCost, 20, 3) > 100);
   // (and the clock going backwards: a frame prepared for a second that is far ahead is due for a fresh start now)
   FramePlanner b(20000);
@@ -1641,18 +1713,44 @@ void testWallFix() {
   }
 }
 
+// The schedule the frame planner had up to 1.12, for the negative controls: the next second was drawn only when its
+// draw had to begin (the send, the draw and 60 ms to spare before its tick), and nothing was quiet while a frame
+// waited, so a second had two sleeps, one until the draw and a short one between the draw and the send.  (FramePlanner
+// with that wait put back in front of it.)
+struct DrawLate : FramePlanner {
+  explicit DrawLate(int32_t latencyUs) : FramePlanner(latencyUs) {}
+  // How long until the next second is to be drawn, while it waits for that (0: now); -1 when it does not
+  int32_t untilDrawUs(time_t sec, int32_t usec) const {
+    if (prepared() || (lastSentSec() != sec && lastSentSec() != sec + 1)) return -1;
+    const int32_t lead = (int32_t)(sendCostUs() + drawCostUs()) + latencyUs() + 60000;
+    const int32_t until = (lastSentSec() == sec + 1 ? 1000000 : 0) + 1000000 - usec - lead;
+    return until > 0 ? until : 0;
+  }
+  Step next(time_t sec, int32_t usec, bool force) {
+    if (!force && untilDrawUs(sec, usec) > 0) return Step();  // IDLE
+    return FramePlanner::next(sec, usec, force);
+  }
+  int32_t idleUs(time_t sec, int32_t usec) const {
+    const int32_t until = untilDrawUs(sec, usec);
+    return until >= 0 ? until : FramePlanner::idleUs(sec, usec);
+  }
+  bool quiet(int32_t usec) const { return !prepared() && 1000000 - usec > kQuietUs; }
+};
+
 // The UI loop with light sleep, as the sketch runs it (11_Clock_Dashboard.ino, loop() and lightSleepStep()): the frame
 // planner, the slow work in its part of the second, a line of the power log every ten minutes, a banner, button
 // presses, radio sessions with the clock at 80 MHz, and the idle clock in between.  A frame costs 30 ms to draw and
 // 15 to send at 80 MHz, 80 / MHz times as much below.  A light sleep takes 5 ms of the chip awake on the way (the SDK
 // calibrates the RC clock for some 4 ms, and takes that off the time asked for), and wakes up to 1 ms early or 2 ms
 // late, give or take 0.2 % of its length.  Stalls (a flash write, the radio stack: work of the other core) come at
-// random moments while the chip is awake; while it sleeps the other core sleeps too.
+// random moments while the chip is awake; while it sleeps the other core sleeps too.  `Plan` is the frame planner, or
+// for the negative controls the schedule it had up to 1.12 (DrawLate, below).
 struct SleepLoop {
   bool lightSleep = true;
   int idleMhz = 20;
   int32_t latencyUs = 20000;   // the planner's time to the glass (display_power.h)
   double stallEverySec = 0;    // stalls of 20 to 300 ms, about this often in the time awake (0: none)
+  double slowDrawShare = 0;    // this share of the scheduled draws is held up by a stall of 20 to 300 ms (0: none)
   double pressEverySec = 600;  // a button press about this often
   // what came of it
   int frames = 0, late = 0, presses = 0, logLines = 0, sleeps = 0;
@@ -1664,9 +1762,10 @@ struct SleepLoop {
   int64_t asleepUs = 0, workUs = 0, idleUs = 0, totalUs = 0;
   double chipMa = 0;  // the chip's average current by the datasheet: working, awake and idle, or in light sleep
 
+  template <class Plan = FramePlanner>
   void run(int seconds, uint64_t seed) {
     Rng r(seed);
-    FramePlanner p(latencyUs);
+    Plan p(latencyUs);
     int mhz = 80;
     int64_t t = 1700000000LL * 1000000LL + 250000;
     const int64_t start = t, end = t + (int64_t)seconds * 1000000;
@@ -1684,7 +1783,11 @@ struct SleepLoop {
     enum Kind { WORKING, IDLE, ASLEEP };
     auto spend = [&](int64_t us, Kind kind) {
       if (us <= 0) return;
-      while (t + us >= nextStall) {  // a stall freezes the loop (a flash write, the radio stack) wherever it happens
+      // A stall freezes the loop (a flash write, the radio stack) wherever it happens while the chip is awake.  (Up to
+      // 1.12 one that fell due in a sleep came at its start and made it end that much late, as if the time asleep were
+      // awake: that put a stall at every sleep's start with a chance that grew with the sleep, which is not how it
+      // goes on the chip, where only the few milliseconds of the way in are exposed, and those are spent WORKING.)
+      while (kind != ASLEEP && t + us >= nextStall) {
         const int64_t s = (int64_t)((20 + 280 * r.uni()) * 1000);
         workUs += s;
         charge += (double)s * mA(mhz, true);
@@ -1756,7 +1859,8 @@ struct SleepLoop {
           break;
         }
         case FramePlanner::PREPARE: {
-          const int64_t c = cost(30000);
+          int64_t c = cost(30000);
+          if (slowDrawShare > 0 && r.uni() < slowDrawShare) c += (int64_t)((20 + 280 * r.uni()) * 1000);  // (a stall in the draw)
           spend(c, WORKING);
           p.drew(st.sec, (uint32_t)c, true);
           break;
@@ -1835,14 +1939,18 @@ void testLightSleepLoop() {
   section("light sleep: a simulated UI loop");
   const int kSeconds = 3 * 3600;
   for (int mhz : {20, 40, 80}) {
-    SleepLoop off, on;
+    SleepLoop off, on, late;  // (late: the schedule up to 1.12, DrawLate)
     off.lightSleep = false;
-    off.idleMhz = on.idleMhz = mhz;
+    off.idleMhz = on.idleMhz = late.idleMhz = mhz;
     off.run(kSeconds, 21);
     on.run(kSeconds, 21);
+    late.run<DrawLate>(kSeconds, 21);
+    const double perSec = on.sleeps / (double)kSeconds, perSecLate = late.sleeps / (double)kSeconds;
     printf("  idle clock %d MHz: asleep %.1f %% of the time, working %.1f %%, awake and idle %.1f %%; the chip %.1f mA without, %.1f mA with"
            " (datasheet model)\n",
            mhz, 100.0 * on.asleepUs / on.totalUs, 100.0 * on.workUs / on.totalUs, 100.0 * on.idleUs / on.totalUs, off.chipMa, on.chipMa);
+    printf("    %.2f sleeps a second (%.2f with the draw left until just before the send, as up to 1.12, and %.2f mA)\n", perSec, perSecLate,
+           late.chipMa);
     printf("    frames late: %d of %d with (worst %.1f ms), %d of %d without (worst %.1f ms); battery read %.1f s apart at worst; log lines"
            " %.2f s late at worst; presses taken %.1f ms after at worst, %.1f ms when it slept; banner down %.1f ms late at worst, %.1f ms"
            " with no button pressed\n",
@@ -1852,10 +1960,15 @@ void testLightSleepLoop() {
     CHECK(on.frames > kSeconds * 9 / 10 && off.frames > kSeconds * 9 / 10);
     CHECK(on.late <= off.late);
     CHECK(on.worstLateUs <= off.worstLateUs + 5000);
-    CHECK(off.asleepUs == 0 && off.sleeps == 0 && on.sleeps > kSeconds);
+    CHECK(off.asleepUs == 0 && off.sleeps == 0);
+    // one sleep a second after 1.12 (the send and the draw are one stretch awake), where there were two (up to 1.12 this
+    // checked for more than one a second); the time with the radio on or a button pressed has none
+    CHECK(perSec > 0.95 && perSec < 1.05);
+    CHECK(perSecLate > 1.8);  // (the old schedule: the check can fail)
+    CHECK(on.chipMa < late.chipMa);
     CHECK(on.asleepUs > (mhz == 20 ? 0.70 : 0.85) * on.totalUs);  // (the model's own figures; the board's are unknown)
     CHECK(on.worstBatteryGapUs < 7000000);  // every 5 s, and a second or two late at worst
-    CHECK(on.logLines >= kSeconds / 600 - 1 && on.worstLogLateUs < 2000000);
+    CHECK(on.logLines >= kSeconds / 600 - 1 && on.worstLogLateUs < 1000000);  // (each line within a second of being due)
     CHECK(on.presses > 10 && on.worstPressAsleepUs >= 0 && on.worstPressAsleepUs < 5000);  // KEY ends a sleep at once ...
     CHECK(on.worstPressUs < 45000 * 1.1 * 80 / mhz + 10000);  // ... and otherwise a press waits for a frame at most
     CHECK(on.worstBannerIdleUs >= 0 && on.worstBannerIdleUs < 6000);  // a banner comes down on time (the sleep ends before)
@@ -1875,6 +1988,39 @@ void testLightSleepLoop() {
            off.worstPressUs / 1000.0, 100.0 * on.asleepUs / on.totalUs);
     CHECK(on.late <= off.late + 2);
     CHECK(on.worstPressUs <= off.worstPressUs + 5000);
+    // and against the schedule up to 1.12, over three hours: a stall in the draw no longer makes its second late, only
+    // one in the send, or in the few milliseconds awake before it
+    int lateNew = 0, lateOld = 0, framesNew = 0;
+    for (uint64_t seed : {9, 10, 11}) {
+      SleepLoop a, b;
+      a.stallEverySec = b.stallEverySec = 8;
+      a.pressEverySec = b.pressEverySec = 30;
+      a.run(3600, seed);
+      b.run<DrawLate>(3600, seed);
+      lateNew += a.late;
+      lateOld += b.late;
+      framesNew += a.frames;
+    }
+    printf("    over three hours: %d of %d frames late, %d with the draw left until just before the send (up to 1.12)\n", lateNew, framesNew,
+           lateOld);
+    CHECK(lateNew < lateOld);
+  }
+  {  // one draw in ten held up by a stall of 20 to 300 ms, at the idle clock of 20 MHz and with light sleep, over three hours:
+     // drawn a second ahead, no second is late; drawn just in time (up to 1.12), many are
+    SleepLoop on, late;
+    on.slowDrawShare = late.slowDrawShare = 0.1;
+    on.run(kSeconds, 33);
+    late.run<DrawLate>(kSeconds, 33);
+    printf("  one draw in ten held up by 20 to 300 ms: %d of %d frames late (worst %.1f ms), %d of %d drawn just in time (worst %.0f ms);"
+           " battery read %.1f s apart at worst, log lines %.2f s late at worst\n",
+           on.late, on.frames, on.worstLateUs / 1000.0, late.late, late.frames, late.worstLateUs / 1000.0, on.worstBatteryGapUs / 1e6,
+           on.worstLogLateUs / 1e6);
+    CHECK(on.frames > kSeconds * 9 / 10);
+    CHECK(on.late == 0 && on.worstLateUs <= 30000);
+    CHECK(late.late > 100);  // (the check can fail)
+    // the slow work still runs: the battery every 5 s, and a line of the log (which starts only early in a second, after
+    // the draw after 1.12: one held up past that waits a second)
+    CHECK(on.worstBatteryGapUs <= 10000000 && on.logLines >= kSeconds / 600 - 1 && on.worstLogLateUs < 2000000);
   }
   {  // display_power = low: every frame goes out 43 ms earlier in its second (the panel takes that much longer); no more
      // late frames for it, and the chip sleeps about as much
