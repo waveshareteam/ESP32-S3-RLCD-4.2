@@ -660,7 +660,7 @@ without one the clock's own runtime estimate will do: see [Logging a battery run
 ### WiFi sync mode
 
 `wifi_mode = sync` (or `#define WIFI_MODE "sync"` in `secrets.h`) switches the radio off between *sessions*. A session
-starts when something needs the network, lasts while there is something to do, and ends 2.5 seconds after the last thing:
+starts when something needs the network, lasts while there is something to do, and ends a moment after the last thing:
 
 | What starts or holds a session | When |
 | --- | --- |
@@ -670,6 +670,16 @@ starts when something needs the network, lasts while there is something to do, a
 | music playing | with `spotify_live = on` (the default) the radio stays on and the clock asks Spotify every 10 seconds, as in always mode; after a pause it stays on 5 minutes more. With `spotify_live = off` it does not: see [Music in sync mode](#music-in-sync-mode) |
 | a key press | the radio comes on and stays on for 45 seconds: the toast shows at once, and the action follows as soon as the radio is up (about 3 to 8 seconds on a quiet radio) |
 | the *Now Playing* page | on while it is on screen, and for a minute after: this is also how to get to the Spotify linking page (open the page with BOOT and wait for the address to appear) |
+
+The moment is **0.3 seconds** for a session of the clock's own background work (the weather, the time, the place),
+since each fetch has closed its connection by then and a session that asked for the network time waits for its answer
+first, and **2.5 seconds** for one that a key press or Spotify had a part in, so that a command is confirmed and the
+connections close. Both count from the last time something was due. The network task does not ask about the radio
+while a fetch runs, so the moment counts from when the last fetch began, and a fetch that takes longer than that ends
+its session as soon as it is back. A session of background work is therefore shorter than with 2.5 seconds by 2.5
+seconds less the time the fetch took: by the whole 2.2 seconds only for a fetch quicker than 0.3 seconds, and not at
+all for one of 2.5 seconds or more. How long the weather's fetch takes on a real network has not been measured; the
+simulation below counts the whole 2.2 seconds for every session. (Not run on a board yet.)
 
 **When the network is not there** (the clock went to work with you, the router is restarting) that is not held against
 it. The WiFi stack answers "no such network" within a few seconds, the session ends there and then, and the clock **looks
@@ -705,10 +715,10 @@ rules):
 
 | Simulated | Radio on | |
 | --- | --- | --- |
-| A day with a good network | **0.6 %** of the time | 96 sessions of about 6 seconds; 0.9 % with Spotify linked |
+| A day with a good network | **0.4 %** of the time | 96 sessions of about 3.5 seconds; 0.9 % with Spotify linked |
 | Eight hours away from the network | 0.9 % | 99 looks; 1.7 % with a backup network set (two scans a look) |
 | Three hours with a router that refuses the clock | 3.5 % | 15 failed sessions of 25 seconds |
-| The router up, the internet down | 2.9 % | the weather and the time retried after 1, 2, 5, 10, 15 minutes |
+| The router up, the internet down | 1.9 % | the weather and the time retried after 1, 2, 5, 10, 15 minutes |
 | Two hours of music, `spotify_live = on` | 100 % | |
 | Two hours of music, `spotify_live = off` | 3.5 % | 42 sessions; the next title 5 seconds after the track changes |
 

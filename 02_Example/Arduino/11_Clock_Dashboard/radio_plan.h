@@ -38,7 +38,15 @@
 namespace radioplan {
 
 const uint32_t kConnectTimeoutMs = 45000;  // a session that is not online by now is given up (main 20 s, backup 20 s, and a margin)
-const uint32_t kSettleMs = 2500;           // the radio stays on this long after the last thing was done (sockets close, a command is confirmed)
+// The radio stays on a moment after the last thing was done: kSettleMs in a session that a key press or Spotify had a
+// part in (a command is confirmed, the connections close), kSettleQuietMs in one of background work only (the weather,
+// the time, the place: each fetch has closed its connection when it returns, and an answer still on its way, the
+// network time's, holds the session on).  Both count from the network task's last pass with something due; it makes
+// none while it is inside a fetch, so a fetch that takes longer than the settle ends its session as soon as it is back.
+// kSettleQuietMs must be longer than the longest wait between two of the task's passes while joined (250 ms), so
+// that a pass in which nothing happens to be due does not end a session that has more to do.
+const uint32_t kSettleMs = 2500;
+const uint32_t kSettleQuietMs = 300;
 const uint32_t kDemandMs = 45000;          // a key press holds the radio for this long (follow-up presses, the confirming poll)
 const uint32_t kSessionMaxMs = 180000;     // work that is still "due" after this long, with nothing holding the radio, ends the session as a failure
 const int kBackoffSteps = 5;
@@ -130,6 +138,8 @@ struct Inputs {
   bool demand = false;       // a key press (or a refresh) asked for the radio and its time has not run out
   uint32_t demandSeq = 1;    // ... and which press that was: it counts up with every press
   bool absent = false;       // the WiFi stack has looked for each of the clock's networks and found none (Search::noneInRange)
+  bool awaiting = false;     // an answer is still on its way (the network time was asked for): holds a joined session on, never starts one
+  bool spotifyWork = false;  // a look at Spotify is due (it is in workDue as well): the session keeps the long settle
 };
 
 // One session's search for the clock's networks.  The network task tries one network at a time and passes on
@@ -234,6 +244,8 @@ class Planner {
     // a key press buys one attempt: the one a session was given up on does not start the next
     const bool demand = in.demand && in.demandSeq != spentSeq_;
     const bool wants = in.workDue || in.holdSpotify || demand;
+    // a session that a key press or Spotify had a part in, at any point, keeps the long settle to its end
+    held_ = (state_ != OFF && held_) || in.holdSpotify || demand || in.spotifyWork;
     switch (state_) {
       case OFF:
         if (retryAtMs_ != 0 && due(nowMs, retryAtMs_)) retryAtMs_ = 0;  // the wait is over (and a time long past must not come round again)
@@ -265,9 +277,11 @@ class Planner {
           break;
         }
         if (wants) lastActiveMs_ = nowMs;
-        if (!in.holdSpotify && !demand && (uint32_t)(nowMs - sessionStartMs_) >= kSessionMaxMs && in.workDue) {
-          end(nowMs, in, FAILED);  // work that never gets done must not keep the radio on for ever
-        } else if ((uint32_t)(nowMs - lastActiveMs_) >= kSettleMs) {
+        if (!in.holdSpotify && !demand && (uint32_t)(nowMs - sessionStartMs_) >= kSessionMaxMs && (in.workDue || in.awaiting)) {
+          end(nowMs, in, FAILED);  // work that never gets done (or an answer that never comes) must not keep the radio on for ever
+        } else if (!in.awaiting && (uint32_t)(nowMs - lastActiveMs_) >= (held_ ? kSettleMs : kSettleQuietMs)) {
+          // (an answer that was waited for needs nothing after it: the settle counts from the last work, so a
+          // session whose settle ran out while it waited ends as soon as the answer is in)
           state_ = OFF;  // everything is done
           retryAtMs_ = 0;
           outcome_ = DONE;
@@ -366,6 +380,7 @@ class Planner {
   uint32_t retryAtMs_ = 0, holdUntilMs_ = 0;
   uint32_t spentSeq_ = 0;
   bool nudged_ = false, askedFor_ = false;
+  bool held_ = false;  // this session had a key press or Spotify in it (the long settle)
   bool gaveUp_ = false;
   int failures_ = 0;
   int awayLooks_ = 0;

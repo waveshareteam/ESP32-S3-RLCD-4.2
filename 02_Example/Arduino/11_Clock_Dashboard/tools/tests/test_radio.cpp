@@ -72,7 +72,7 @@ void testSteps() {
     d.p.lookNow();
     CHECK(d.step(10));
   }
-  {  // a session: starts at once, goes online, ends 2.5 s after the work is done
+  {  // a session: starts at once, goes online, ends 0.3 s after the work is done (background work only)
     Drive d;
     d.in.workDue = true;
     CHECK(d.step(100) && d.p.state() == Planner::CONNECTING);
@@ -85,7 +85,7 @@ void testSteps() {
     bool on = true;
     while (on && d.t - tDone < 10000) on = d.step(100);
     CHECK(!on && d.p.state() == Planner::OFF);
-    CHECK(d.t - tDone >= kSettleMs && d.t - tDone <= kSettleMs + 200);  // the settle time, no more, no less
+    CHECK(d.t - tDone >= kSettleQuietMs && d.t - tDone <= kSettleQuietMs + 200);  // the settle time, no more, no less
     CHECK(d.p.sessions() == 1 && d.p.failures() == 0 && d.p.retryAtMs() == 0);
     CHECK(d.p.lastOutcome() == Planner::DONE && !d.p.takeGaveUp());
     CHECK(d.p.radioOnMs(d.t) > 8000 && d.p.radioOnMs(d.t) < 12000);
@@ -115,6 +115,175 @@ void testSteps() {
     bool on = true;
     for (int i = 0; i < 3 && on; i++) on = d.step(1000);
     CHECK(!on && d.p.takeGaveUp() && d.p.failures() == 1 && d.p.lastOutcome() == Planner::FAILED);
+  }
+}
+
+// How long a joined session stays on once nothing holds it: steps of 100 ms until the radio is off, at most
+// `limitMs` (UINT32_MAX: still on then).
+uint32_t offAfter(Drive &d, uint32_t limitMs = 10000) {
+  const uint32_t t0 = d.t;
+  bool on = true;
+  while (on && d.t - t0 < limitMs) on = d.step(100);
+  return on ? UINT32_MAX : d.t - t0;
+}
+bool settledIn(uint32_t afterMs, uint32_t settleMs) { return afterMs >= settleMs && afterMs <= settleMs + 100; }  // no less, and within a step
+// (helper: 3 s of association, then joined)
+bool join(Drive &d) {
+  for (int i = 0; i < 30; i++) d.step(100);
+  d.in.online = true;
+  d.step(100);
+  return d.p.state() == Planner::ONLINE;
+}
+
+// The settle: 2.5 s after a session that someone asked for or that Spotify had a part in, 0.3 s after one of
+// background work only, and never while an answer is still on its way.
+void testSettle() {
+  section("radio plan: the settle after the work");
+  CHECK(kSettleQuietMs < kSettleMs);
+  CHECK(kSettleQuietMs > 250);  // longer than the network task's longest wait between two passes while joined
+  {  // background work only (the weather, the time, the place): 0.3 s
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    for (int i = 0; i < 20; i++) d.step(100);
+    d.in.workDue = false;
+    CHECK(settledIn(offAfter(d), kSettleQuietMs));
+    CHECK(d.p.lastOutcome() == Planner::DONE && !d.p.takeGaveUp());
+  }
+  uint32_t pressAfter = 0;
+  {  // a session a key press started: 2.5 s after the press lets go
+    Drive d;
+    d.in.demand = true;
+    d.in.demandSeq = 2;
+    d.step(100);
+    CHECK(join(d));
+    for (int i = 0; i < 400; i++) CHECK(d.step(100));  // the rest of its 45 seconds
+    d.in.demand = false;
+    pressAfter = offAfter(d);
+    CHECK(settledIn(pressAfter, kSettleMs));
+    // ... and the next session, of background work only, is a quiet one again
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    d.in.workDue = false;
+    CHECK(settledIn(offAfter(d), kSettleQuietMs));
+  }
+  {  // the negative control: the same timings with nothing but background work end 0.3 s after, which is what a
+     // planner that gave a held session the quiet settle would give, and the key press check above fails on it
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    for (int i = 0; i < 400; i++) CHECK(d.step(100));
+    d.in.workDue = false;
+    const uint32_t after = offAfter(d);
+    CHECK(settledIn(after, kSettleQuietMs) && !settledIn(after, kSettleMs) && after < pressAfter);
+  }
+  {  // a key press in the middle of a background session, then the work goes on and ends: 2.5 s
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    d.in.demand = true;
+    d.in.demandSeq = 2;
+    for (int i = 0; i < 30; i++) d.step(100);
+    d.in.demand = false;
+    for (int i = 0; i < 20; i++) d.step(100);
+    d.in.workDue = false;
+    CHECK(settledIn(offAfter(d), kSettleMs));
+  }
+  {  // Spotify held the radio for a moment (a command waited) at any point of the session: 2.5 s
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    d.in.holdSpotify = true;
+    for (int i = 0; i < 10; i++) d.step(100);
+    d.in.holdSpotify = false;
+    for (int i = 0; i < 20; i++) d.step(100);  // the weather goes on after it
+    d.in.workDue = false;
+    CHECK(settledIn(offAfter(d), kSettleMs));
+  }
+  {  // a look at Spotify was due: 2.5 s, whether it was due from the start or came due while the radio joined
+    for (int from = 0; from < 2; from++) {
+      Drive d;
+      d.in.workDue = true;
+      d.in.spotifyWork = from == 0;
+      d.step(100);
+      d.in.spotifyWork = true;  // (the network task asks for the session's look once the radio is on)
+      CHECK(join(d));
+      for (int i = 0; i < 30; i++) d.step(100);
+      d.in.workDue = d.in.spotifyWork = false;
+      CHECK(settledIn(offAfter(d), kSettleMs));
+    }
+  }
+  for (int by = 0; by < 3; by++) {  // a held session that drops and joins again stays held: held by a key press, by
+                                    // Spotify (a command, music, the Now Playing page) or by a look at Spotify
+    Drive d;
+    d.in.demandSeq = 2;
+    d.in.demand = by == 0;
+    d.in.holdSpotify = by == 1;
+    d.in.spotifyWork = d.in.workDue = by == 2;
+    d.step(100);
+    CHECK(join(d));
+    for (int i = 0; i < 50; i++) d.step(100);
+    d.in.demand = d.in.holdSpotify = d.in.spotifyWork = false;
+    d.in.online = false;
+    d.in.workDue = true;  // (the weather came due meanwhile)
+    CHECK(d.step(100) && d.p.state() == Planner::CONNECTING);
+    CHECK(join(d));
+    d.in.workDue = false;
+    CHECK(settledIn(offAfter(d), kSettleMs));
+  }
+  {  // an answer on its way (the network time) holds a joined session past the settle; once it is in, the session
+     // ends at once, the settle since the last work having run
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    d.in.workDue = false;
+    d.in.awaiting = true;
+    for (int i = 0; i < 30; i++) CHECK(d.step(100));  // 3 s: ten times the settle
+    d.in.awaiting = false;
+    CHECK(offAfter(d) == 100);
+    CHECK(d.p.lastOutcome() == Planner::DONE && !d.p.takeGaveUp());
+  }
+  {  // ... and an answer that is in before the settle has run changes nothing: 0.3 s after the work
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    const uint32_t tWork = d.t;  // (the last pass with work due)
+    d.in.workDue = false;
+    d.in.awaiting = true;
+    CHECK(d.step(100) && d.step(100));
+    d.in.awaiting = false;
+    CHECK(offAfter(d) != UINT32_MAX && settledIn(d.t - tWork, kSettleQuietMs));
+  }
+  {  // waiting for an answer never starts a session
+    Drive d;
+    d.in.awaiting = true;
+    for (int i = 0; i < 600; i++) CHECK(!d.step(1000));
+    CHECK(d.p.sessions() == 0 && d.p.radioOnMs(d.t) == 0);
+  }
+  {  // ... nor keeps one that cannot join from being given up
+    Drive d;
+    d.in.workDue = true;
+    d.in.awaiting = true;
+    d.step(100);
+    CHECK(d.untilOff(kConnectTimeoutMs + 5000) && d.p.lastOutcome() == Planner::FAILED);
+  }
+  {  // an answer that never comes is given up with the session after three minutes, as work that never gets done is
+    Drive d;
+    d.in.workDue = true;
+    d.step(100);
+    CHECK(join(d));
+    d.in.workDue = false;
+    d.in.awaiting = true;
+    const uint32_t t0 = d.t;
+    CHECK(d.untilOff(400000) && d.p.takeGaveUp() && d.p.lastOutcome() == Planner::FAILED);
+    CHECK(d.t - t0 >= kSessionMaxMs - 5000 && d.t - t0 <= kSessionMaxMs + 1000);
   }
 }
 
@@ -497,6 +666,14 @@ struct NetDay {
   bool live = true;      // spotify_live
   bool playing = false;  // the phone is playing
   uint32_t trackMs = 210000;
+  // The network time as SNTP does it (sntpAsync): asked for in a joined pass, answered ntpReplyMs later in the
+  // background and taken in the first pass after that which is not inside a fetch, the planner told meanwhile that
+  // an answer is on its way (tellAwaiting false: a planner that is not told, for the negative control).  Without
+  // sntpAsync the time is synced at once, in 400 ms.
+  bool sntpAsync = false;
+  uint32_t ntpReplyMs = 300;
+  bool tellAwaiting = true;
+  bool longSettle = false;  // every session settles as one someone asked for (the rule before kSettleQuietMs)
   uint32_t t = 1000;
   // the session
   bool radio = false, online = false;
@@ -508,13 +685,15 @@ struct NetDay {
   uint32_t ntpAt = 0, weatherAt = 0, ntpRetryAt = 0;
   int weatherFails = 0;
   bool peekDone = false;
+  bool sntpStarted = false;
+  uint32_t sntpAt = 0;
   uint32_t demandUntilMs = 0, demandSeq = 1;
   // the player, and what the clock believes of it
   uint32_t trackStart = 0, trackNo = 0;
   bool seenPlaying = false;
   uint32_t seenTrackNo = 0, lookAt = 0, nextPollAt = 0;
   // what happened
-  uint32_t weatherFetches = 0, ntpSyncs = 0, peeks = 0, looks = 0, awayEnds = 0, failedEnds = 0;
+  uint32_t weatherFetches = 0, ntpSyncs = 0, ntpCutOff = 0, peeks = 0, looks = 0, awayEnds = 0, failedEnds = 0;
   uint32_t lastWeather = 0, lastNtp = 0, maxWeatherGap = 0, maxNtpGap = 0;
   uint32_t longestSession = 0, staleMs = 0, staleRun = 0, maxStaleRun = 0;
   explicit NetDay(uint32_t timeout = 25000) : p(true, timeout) { pick.configure(true, false); }
@@ -550,6 +729,13 @@ struct NetDay {
     seenTrackNo = trackNo;
     lookAt = playing ? ((t + trackLookAfterMs(trackMs, t - trackStart)) | 1u) : 0;
     nextPollAt = t + 10000;
+  }
+  void synced() {  // the network time came
+    ntpEver = true;
+    ntpAt = t + 3600000UL;
+    if (lastNtp && t - lastNtp > maxNtpGap) maxNtpGap = t - lastNtp;
+    lastNtp = t;
+    ntpSyncs++;
   }
 
   void tick() {
@@ -595,10 +781,12 @@ struct NetDay {
     needs.playing = seenPlaying;
     needs.live = live;
     in.workDue = ntpDue() || weatherDue() || peekDue() || lookDue();
+    in.spotifyWork = peekDue() || lookDue() || longSettle;
     in.holdSpotify = spotify && spotifyHolds(needs);
     in.demand = demandActive(t, demandUntilMs);
     in.demandSeq = demandSeq;
     in.absent = radio && search.noneInRange();
+    in.awaiting = sntpStarted && tellAwaiting;
     const bool was = radio;
     radio = p.update(t, in);
     if (radio && !was) {
@@ -614,6 +802,8 @@ struct NetDay {
       if ((uint32_t)(t - sessionStart) > longestSession) longestSession = t - sessionStart;
       pick.radioOff();
       online = false;
+      if (sntpStarted) ntpCutOff++;  // (stopRadio() stops SNTP: an answer still on its way is lost)
+      sntpStarted = false;
       if (p.takeGaveUp()) {
         if (p.lastOutcome() == Planner::AWAY) awayEnds++;
         else failedEnds++;
@@ -633,15 +823,23 @@ struct NetDay {
       return;
     }
     // what the task does once joined: the work of one loop, in the order of net_task.cpp
+    if (t >= busyUntil && sntpAsync) {
+      if (!sntpStarted && ntpNear()) {
+        sntpStarted = true;
+        sntpAt = t;
+      } else if (sntpStarted && internetUp && t - sntpAt >= ntpReplyMs) {
+        sntpStarted = false;
+        synced();
+      } else if (sntpStarted && t - sntpAt > 20000) {  // no reply in twenty seconds: try again in five minutes
+        sntpStarted = false;
+        ntpRetryAt = t + 300000;
+      }
+    }
     if (t >= busyUntil) {
-      if (ntpNear()) {
+      if (!sntpAsync && ntpNear()) {
         busyUntil = t + 400;
         if (internetUp) {
-          ntpEver = true;
-          ntpAt = t + 3600000UL;
-          if (lastNtp && t - lastNtp > maxNtpGap) maxNtpGap = t - lastNtp;
-          lastNtp = t;
-          ntpSyncs++;
+          synced();
         } else {  // no reply: wait twenty seconds, try again in five minutes
           busyUntil = t + 20000;
           ntpRetryAt = t + 20000 + 300000;
@@ -772,6 +970,67 @@ void testDay() {
     const uint32_t onAfterMusic = d.p.radioOnMs(d.t);
     d.run(4 * 3600000UL);
     CHECK(d.p.radioOnMs(d.t) - onAfterMusic < 0.03 * 4 * 3600000.0);
+  }
+}
+
+// The short settle over a day: what it saves, and that what gets done stays the same.
+void testSettleDay() {
+  section("radio plan: the short settle over a day");
+  {  // a quiet day: the same weather fetches, time syncs and largest gaps as with the long settle for every session,
+     // and the radio on 2.2 s less a session
+    NetDay now(kConnectTimeoutMs), before(kConnectTimeoutMs);
+    before.longSettle = true;
+    now.run(24 * 3600000UL);
+    before.run(24 * 3600000UL);
+    const uint32_t onNow = now.p.radioOnMs(now.t), onBefore = before.p.radioOnMs(before.t), sessions = now.p.sessions();
+    printf("  (a quiet day: radio on %.1f s, %.1f s with the long settle for every session; %u sessions)\n", onNow / 1000.0, onBefore / 1000.0,
+           (unsigned)sessions);
+    CHECK(sessions == before.p.sessions() && sessions >= 94);
+    CHECK(now.weatherFetches == before.weatherFetches && now.ntpSyncs == before.ntpSyncs);
+    CHECK(now.maxWeatherGap == before.maxWeatherGap && now.maxNtpGap == before.maxNtpGap);
+    // the weather every quarter of an hour, the time every hour, and every session a weather session: the time has
+    // none of its own
+    CHECK(now.weatherFetches >= 94 && now.maxWeatherGap <= 15 * 60000UL + 15000);
+    CHECK(now.ntpSyncs >= 23 && now.maxNtpGap <= 3600000UL + 30000);
+    CHECK(sessions == now.weatherFetches);
+    CHECK(now.failedEnds == 0 && now.awayEnds == 0 && now.ntpCutOff == 0);
+    CHECK(onBefore - onNow >= sessions * (kSettleMs - kSettleQuietMs - 100) && onBefore - onNow <= sessions * (kSettleMs - kSettleQuietMs));
+  }
+  {  // with Spotify linked every session looks at the player, so every one keeps the long settle: nothing changes
+    NetDay now(kConnectTimeoutMs), before(kConnectTimeoutMs);
+    now.spotify = before.spotify = true;
+    before.longSettle = true;
+    now.run(24 * 3600000UL);
+    before.run(24 * 3600000UL);
+    CHECK(now.p.radioOnMs(now.t) == before.p.radioOnMs(before.t) && now.peeks == before.peeks && now.p.sessions() == before.p.sessions());
+  }
+  {  // the network time answering in the background 1.5 s after the weather is done (1.2 s after the short settle
+     // would have run out): the sessions wait for it, so the time is synced in the weather's sessions as before, with
+     // none of its own; the negative control, a planner that is not told an answer is on its way, cuts it off
+    NetDay base(kConnectTimeoutMs), late(kConnectTimeoutMs), deaf(kConnectTimeoutMs);
+    late.sntpAsync = deaf.sntpAsync = true;
+    late.ntpReplyMs = deaf.ntpReplyMs = 1500;
+    deaf.tellAwaiting = false;
+    base.run(24 * 3600000UL);
+    late.run(24 * 3600000UL);
+    deaf.run(24 * 3600000UL);
+    printf("  (the time answering 1.5 s after the weather: %u syncs, %u sessions, the longest gap %.0f s; not told: %u answers cut off, %u sessions, %.0f s)\n",
+           (unsigned)late.ntpSyncs, (unsigned)late.p.sessions(), late.maxNtpGap / 1000.0, (unsigned)deaf.ntpCutOff, (unsigned)deaf.p.sessions(),
+           deaf.maxNtpGap / 1000.0);
+    CHECK(late.ntpCutOff == 0 && late.ntpSyncs == base.ntpSyncs && late.p.sessions() == base.p.sessions());
+    CHECK(late.p.sessions() == late.weatherFetches && late.failedEnds == 0 && late.awayEnds == 0);
+    CHECK(late.weatherFetches == base.weatherFetches && late.maxNtpGap <= base.maxNtpGap + 3000);
+    CHECK(deaf.ntpCutOff >= 20 && deaf.p.sessions() > base.p.sessions());
+  }
+  {  // ... and no answer at all (the router is up, the internet is not): the session waits twenty seconds for it, no more
+    NetDay d(kConnectTimeoutMs);
+    d.sntpAsync = true;
+    d.run(3600000UL);
+    d.internetUp = false;
+    d.longestSession = 0;
+    d.run(2 * 3600000UL);
+    CHECK(d.longestSession >= 20000 && d.longestSession <= 20000 + d.connectMs + 1500);
+    CHECK(d.ntpCutOff == 0 && d.failedEnds == 0);
   }
 }
 
@@ -2901,12 +3160,14 @@ void testTroubleRow() {
 
 int main() {
   testSteps();
+  testSettle();
   testFailures();
   testSearch();
   testAway();
   testWrap();
   testSpotifyRules();
   testDay();
+  testSettleDay();
   testAwayDays();
   testTrackMode();
   testClockPolicy();

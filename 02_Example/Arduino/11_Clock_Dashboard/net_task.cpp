@@ -525,8 +525,15 @@ void netTask(void *) {
       const bool ntpWake = (!ntpEver || radioplan::due(now, ntpAtMs + radioplan::kNtpGraceMs)) && ntpRetryAtMs == 0;
       const bool placeWake = !locationOk && radioplan::due(now, nextLocationMs);
       const bool weatherWake = locationOk && (s_weatherNow || radioplan::due(now, nextWeatherMs));
-      in.workDue = ntpWake || placeWake || weatherWake || spotifyPeekPending() || spotifyLookDue();
+      // A session of background work only (the time, the place, the weather) ends kSettleQuietMs after it: stopRadio()
+      // needs nothing from the settle then, since httpsGet() has closed its connection when a fetch returns and
+      // stopRadio() disconnects the WiFi itself.  A look at Spotify keeps the long settle (spotifyWork).
+      in.spotifyWork = spotifyPeekPending() || spotifyLookDue();
+      in.workDue = ntpWake || placeWake || weatherWake || in.spotifyWork;
       in.holdSpotify = spotifyWantsRadio();
+      // SNTP answers in the background: a session that asked for the time waits for the answer (or for the
+      // twenty seconds below), so that a short settle after the weather does not cut it off
+      in.awaiting = sntpStarted;
       uint32_t demandUntil = s_demandUntilMs.load();
       in.demand = radioplan::pending(now, demandUntil);
       if (demandUntil != 0 && !in.demand) s_demandUntilMs.compare_exchange_strong(demandUntil, 0);  // over (unless a new press just came)
