@@ -203,11 +203,11 @@ const Def kDefs[] = {
      "and without WiFi nothing does.  Not yet tried on the board; see the README."},
     {"display_power", "dpower", T_ENUM, OFF(displayPower), 0, 0, 0, kDisplayPowerNames, false, "Power",
      "normal or low: how the display's controller drives the panel.  Low is its low power mode,\n"
-     "which refreshes the panel 2 times a second instead of 25.5 (8 times for the seconds after\n"
-     "a button press): less current (how much has not been measured), and a frame shows up 0 to\n"
-     "500 ms after it is sent instead of 0 to 39.  The clock allows for that, so the seconds\n"
-     "change up to about 250 ms early or late instead of 20.  Not yet tried on the board; see\n"
-     "the README."},
+     "which refreshes the panel once a second instead of 25.5 times (8 times for the seconds\n"
+     "after a button press): less current (how much has not been measured), and a frame shows\n"
+     "up 0 to 1000 ms after it is sent instead of 0 to 39.  The clock allows for that, so the\n"
+     "seconds change up to about 500 ms early or late instead of 20.  Not yet tried on the\n"
+     "board; see the README."},
     {"weather_interval_min", "wxint", T_INT, OFF(weatherIntervalMin), 0, 5, 240, nullptr, false, "Weather",
      "Minutes between weather updates, 5 to 240 (default 15)."},
 };

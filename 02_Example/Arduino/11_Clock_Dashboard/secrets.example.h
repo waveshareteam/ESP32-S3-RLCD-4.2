@@ -59,7 +59,7 @@
 // #define CONSOLE_MODE "auto"            // the USB serial console: "on", "auto" (only while a computer is on the USB port) or "off" (README: Saving power)
 // #define POWER_LOG 1                    // 1 = a line of power readings in the clock's flash every 10 minutes, copied to an SD card at start-up (README: Logging a battery run)
 // #define LIGHT_SLEEP 1                  // 1 = light sleep between the frames while the radio and the console are off (untried: README: Light sleep)
-// #define DISPLAY_POWER "low"            // the display refreshed 2 times a second instead of 25.5, for less current (untried: README: The display's low power mode)
+// #define DISPLAY_POWER "low"            // the display refreshed once a second instead of 25.5 times, for less current (untried: README: The display's low power mode)
 // #define SPOTIFY_ENABLED 0              // 0 = off, even with a Client ID
 // #define SPOTIFY_LIVE 0                 // with WIFI_MODE "sync": 0 = the radio sleeps while music plays, one look a track (1 = it stays on)
 

@@ -46,7 +46,9 @@ const uint32_t kMaxBytes = 1024 * 1024;    // the two files together never hold 
 const int kMaxFailures = 3;                // writes in a row that may fail before the log gives up for this run
 const size_t kMaxLine = 512;               // a line, or the heading, with its line end and a terminator
 // A write takes a tenth of a second or a few, and has to be over before the coming second is sent
-// (frame_plan.h; it is drawn by then): it only starts this early in a second.
+// (frame_plan.h; it is drawn by then): it only starts this early in a second.  (With display_power = low at 1 Hz
+// that send is about 485 ms after the tick at 80 MHz and 440 at 20, so a write that starts as late as it may has
+// some 300 ms.)
 const int32_t kLatestStartUs = 200000;
 
 const char *const kFile = "powerlog.csv";     // the newest lines

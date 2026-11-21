@@ -120,23 +120,29 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
     own in the log (the sheet's seventh line).
     * The meter on USB (5 V, battery out), twenty seconds after the last button press, with `display_power = low` and
       with `normal`, nothing else changed (each is a restart): the difference is what it saves. The guess is about
-      1.3 mA; nothing published says more, so anything from nothing to 2 mA would not be a surprise. The *Power and
+      1.35 mA; nothing published says more, so anything from nothing to 2 mA would not be a surprise. The *Power and
       settings* page should have a *Display* row saying `low power mode, 8 Hz refresh` just after the press that turned
-      to it, and `low power mode, 2 Hz refresh` eight or nine seconds later (at most about 9).
-    * The picture at 2 refreshes a second next to 25.5: contrast and legibility in daylight and in lamp light, and
+      to it, and `low power mode, 1 Hz refresh` eight or nine seconds later (at most about 9).
+    * The picture at 1 refresh a second next to 25.5: contrast and legibility in daylight and in lamp light, and
       from the side; no flicker or shimmer, no smearing of the seconds, no ghost of the digits before.
     * The seconds against a reference (a phone's clock with seconds, or a radio time signal), with no button touched
-      for a minute: they should change within about a quarter of a second of it, sometimes a little before and
-      sometimes a little after, drifting slowly between the two; never clearly late.
+      for a minute: they should change within about half a second of it, sometimes before and sometimes after,
+      drifting slowly between the two; never clearly late. Then for ten minutes: count any second that is skipped,
+      or that stays for two. A free-running refresh at 1 Hz does that once every one or two minutes if the panel's
+      oscillator is a percent or two off (README: "The display's low power mode"); none at all means the controller
+      times its refresh by the frames, or its oscillator is close.
+    * Each change of the seconds all at once: the top and bottom of a digit changing together, not one part first
+      and the rest up to a second later (a phone's slow motion video shows it; README: "Whether a frame is torn").
     * Buttons and page changes still feel immediate: the panel goes to 8 Hz with the press, so up to 125 ms before
-      they show, as up to 1.12. A press that takes up to half a second to show means the new rate waits for the slow
+      they show, as up to 1.12. A press that takes up to a second to show means the new rate waits for the slow
       refresh under way.
     * The change of rate itself: no flash, jump or change of contrast at a press, or eight or nine seconds after it when
-      the rate goes back to 2 Hz (watch the *Display* row change). For the seconds after a press they should be within
+      the rate goes back to 1 Hz (watch the *Display* row change). For the seconds after a press they should be within
       about a sixteenth of a second of the reference.
     * The cubes: they run in the high power mode, so they should look as smooth as with `normal`; starting one takes
       about a third of a second longer, and afterwards the *Display* row is back.
-    * After a day: the *Frames* line, no more late frames than without it.
+    * After a day: the *Frames* line, no more late frames than without it (with `power_log = on` as well: at 1 Hz a
+      line of the log has some 300 ms before the next send, where it had over 500 at 2 Hz).
 
 ## The display at rest during the shutdown (1.12)
 

@@ -152,7 +152,7 @@
 // before the second starts.  The panel refreshes itself at 25.5 Hz (every 39 ms),
 // so a frame shows up 0-39 ms after it has been sent; half of that makes the average
 // error zero.  Raise it if the digits seem to change late, lower it if early.  With
-// DISPLAY_POWER "low" the panel refreshes at 2 Hz and the clock adds 230 ms to it (at
+// DISPLAY_POWER "low" the panel refreshes at 1 Hz and the clock adds 480 ms to it (at
 // 8 Hz for the seconds after a button press, and 43 ms).
 #define DISPLAY_LATENCY_MS 20
 
@@ -272,10 +272,10 @@
 #endif
 
 // "normal" or "low": how the display's controller (ST7305) drives the panel.  "low" = its low power mode, which
-// refreshes the panel 2 times a second instead of 25.5 (8 times for the seconds after a button press): less current
-// (how much has not been measured), and a frame shows up 0 to 500 ms after it was sent instead of 0 to 39, which the
-// frame timing allows for (DISPLAY_LATENCY_MS and 230 ms more, display_power.h), so the seconds change up to about
-// 250 ms early or late.  Not yet tried on the board (README: "The display's low power mode").
+// refreshes the panel once a second instead of 25.5 times (8 times for the seconds after a button press): less
+// current (how much has not been measured), and a frame shows up 0 to 1000 ms after it was sent instead of 0 to 39,
+// which the frame timing allows for (DISPLAY_LATENCY_MS and 480 ms more, display_power.h), so the seconds change up
+// to about 500 ms early or late.  Not yet tried on the board (README: "The display's low power mode").
 #ifndef DISPLAY_POWER
 #define DISPLAY_POWER "normal"
 #endif

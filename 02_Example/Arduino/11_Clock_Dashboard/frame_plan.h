@@ -10,7 +10,7 @@
 // without the digits changing late, and the send and the draw are one stretch of work,
 // so with light sleep (light_sleep.h) the chip wakes once a second, for the send itself
 // (idleUs()).  The panel refreshes itself at 25.5 Hz, so a frame shows up
-// 0-39 ms after it has been sent (0-500 ms at the 2 Hz of display_power = low, and
+// 0-39 ms after it has been sent (0-1000 ms at the 1 Hz of display_power = low, and
 // 0-125 ms at its 8 Hz after a button press, display_power.h); the send is timed to end
 // `latencyUs` before the second starts, which puts the average error at zero.
 //
@@ -68,11 +68,11 @@ class FramePlanner {
       // there would be no time left afterwards to prepare the next second the usual way (a draw, and
       // a send that ends `latencyUs_` before the tick), so show the second that is about to start
       // instead: early beats a late second.  The window is 2 * cost + latencyUs_ before the tick,
-      // 110 ms at 80 MHz in the high power mode, and with display_power = low at 2 Hz about 340 ms at
-      // 80 MHz (the clock with light sleep) and 610 at 20, but the longer latency moves the scheduled
+      // 110 ms at 80 MHz in the high power mode, and with display_power = low at 1 Hz about 590 ms at
+      // 80 MHz (the clock with light sleep) and 860 at 20, but the longer latency moves the scheduled
       // sends just as far, so on average such a frame is at most `cost` early whatever the latency
       // (45 ms at 80 MHz, 180 at 20), and the
-      // refresh's own spread comes on top (up to 20 ms either way at 25.5 Hz, 250 at 2 Hz).  (A press
+      // refresh's own spread comes on top (up to 20 ms either way at 25.5 Hz, 500 at 1 Hz).  (A press
       // has the clock at 80 MHz and the panel at 8 Hz: 153 ms, and up to 63 ms either way.)  Nor does
       // it go back to the second before the coming one once that has been sent: after a switch to a
       // shorter latency (a press with display_power = low) it can have gone out by the longer lead,
@@ -117,15 +117,15 @@ class FramePlanner {
 
   // May slow work (I2C sensors, battery, a line of the power log) run now, `sec` / `usec` being the clock?  Never
   // close to a send: with a frame prepared, only while its send is more than kQuietUs away, for whichever second it
-  // is.  With display_power = low the send begins a quarter of a second earlier (about 265 ms before the tick at
-  // 80 MHz, the clock with light sleep, and 310 at the 20 MHz idle clock), so the draw after it ends before the tick,
-  // with its own send most of a second off: slow work that is due runs straight after it, in the same wake.  (This
-  // used to take a prepared frame to go out in this second, so slow work waited for the tick there, and with light
-  // sleep that was a sleep of its own every 5 s.  In the high power mode the draw ends after the tick, and the two
-  // rules agree.)  A frame prepared for a second that is over, or for one more than two ahead (next() drops it), is
-  // never quiet; with none prepared, the tick is what counts.  With display_power = low that leaves slow work about
-  // 655 ms of every second at 80 MHz, from some 220 ms before the tick to 435 ms after it, and 520 ms at 20 MHz, from
-  // some 130 ms before the tick to 390 ms after it.
+  // is.  With display_power = low the send begins half a second earlier (about 515 ms before the tick at 80 MHz, the
+  // clock with light sleep, and 560 at the 20 MHz idle clock), so the draw after it ends well before the tick, with
+  // its own send most of a second off: slow work that is due runs straight after it, in the same wake.  (This used to
+  // take a prepared frame to go out in this second, so slow work waited for the tick there, and with light sleep that
+  // was a sleep of its own every 5 s.  In the high power mode the draw ends after the tick, and the two rules agree.)
+  // A frame prepared for a second that is over, or for one more than two ahead (next() drops it), is never quiet; with
+  // none prepared, the tick is what counts.  With display_power = low that leaves slow work about 655 ms of every
+  // second at 80 MHz, from some 470 ms before the tick to 185 ms after it, and 520 ms at 20 MHz, from some 380 ms
+  // before the tick to 140 ms after it.
   bool quiet(time_t sec, int32_t usec) const {
     if (!prepared_) return 1000000 - usec > kQuietUs;
     if (preparedSec_ < sec || preparedSec_ > sec + 2) return false;  // (which keeps untilSendUs() well in range)

@@ -49,14 +49,14 @@ public:
   void setInvert(bool invert) { _invert = invert; }
   bool invert() const { return _invert; }
 
-  // The controller's low power mode (2 Hz refresh as fullInit() sets it, see setLowRate()) or its high power mode
+  // The controller's low power mode (1 Hz refresh as fullInit() sets it, see setLowRate()) or its high power mode
   // (25.5 Hz, what fullInit() leaves), by the datasheet's sequence: 120 ms into the low one, 320 ms out of it, spent
   // in delay().  Nothing is sent when the panel is in that mode already.  A frame shows up later in the low one: see
   // display_power.h.
   void setLowPower(bool low);
   bool lowPower() const { return _lowPower; }
 
-  // In the low power mode: its rate at rest (2 Hz) or for the seconds after a button press (`busy`, 8 Hz), by one
+  // In the low power mode: its rate at rest (1 Hz) or for the seconds after a button press (`busy`, 8 Hz), by one
   // command with one parameter (B2h) and no wait.  Nothing is sent in the high power mode, or when the panel has that
   // rate already.  The rate stays through a switch between the modes, so call it again after setLowPower().
   void setLowRate(bool busy);

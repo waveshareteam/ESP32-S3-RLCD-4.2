@@ -44,7 +44,7 @@
 // at the send itself (FramePlanner::kWakeLeadUs is 0, FramePlanner::idleUs()): a wake-up that comes early is spun or
 // napped into the send (SEND and SLEEP in loop()), and one that comes late begins the send at once, late by as much,
 // so in the model a send after a wake-up begins up to 2 ms after its moment, for a frame that reaches the glass 0 to
-// 500 ms after it is sent (display_power = low); the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and
+// 1000 ms after it is sent (display_power = low); the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and
 // slow work starts as late, where the milliseconds do not matter.  Stats::worstLateWakeUs() keeps how much later than
 // asked a nap woke at worst, and so how late a send can have begun on the board (the console's power command prints
 // it, though with the console on the chip does not sleep).  None of it has been measured on the board.
