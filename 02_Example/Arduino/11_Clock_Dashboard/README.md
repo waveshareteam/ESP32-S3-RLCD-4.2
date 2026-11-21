@@ -1,7 +1,7 @@
 # 11_Clock_Dashboard
 
 A desk clock for the Waveshare ESP32-S3-RLCD-4.2: it joins your WiFi, sets the time over NTP, works out the
-time zone (including daylight saving) by itself, and shows everything on the reflective LCD. Version **1.13**
+time zone (including daylight saving) by itself, and shows everything on the reflective LCD. Version **1.14**
 ([what changed](#versions)).
 
 <img src="docs/dashboard.png" alt="Dashboard" width="560">
@@ -1483,6 +1483,34 @@ build the sketch.
 `APP_VERSION` in `config.h`. It is not semver: the number goes up by hand with each batch of changes that is handed
 over to run on a board. The *System info* page shows it together with a build id, which tells two builds of one version
 apart (*Which build is running?* under [Updating the firmware from the SD card](#updating-the-firmware-from-the-sd-card)).
+
+**1.14** (22 November 2026)
+
+* **Light sleep sleeps more** (`light_sleep = on`). Once the console is shut down the processor stays at `cpu_mhz` and
+  sleeps between the frames, where it used to go down to the idle clock: awake it gets through the second's work in a
+  quarter of the time it takes at 20 MHz, and asleep the clock makes no difference (`cpu_idle_mhz` still counts with
+  `light_sleep = off`, and while the console runs). The chip wakes once a second instead of twice, for the send and
+  the draw of the next second together; the sleep before a send is aimed a few milliseconds past it, so nothing is
+  waited out awake; the sensors and the battery are read in the same wake; and after a press the chip sleeps between
+  the frames instead of staying awake for 8 seconds (a button that is down, or a click still being timed, keeps it
+  awake). See [Light sleep](#light-sleep).
+* **The display's low power mode at 2 Hz** (`display_power = low`): the panel rests at 2 refreshes a second instead of
+  8, and goes to 8 for the seconds after a press. The rate at rest is a new setting, `display_low_hz` (1, 2, 4 or 8;
+  `#define DISPLAY_LOW_HZ`), so that the rates can be compared with a meter. At 2 Hz the seconds change within about
+  250 ms of the real second instead of 63; at 1 Hz within about 500, and now and then a second would be skipped or
+  shown twice, which is why 1 is not the default. See [The display's low power mode](#the-displays-low-power-mode).
+* **Shorter radio sessions** in `wifi_mode = sync`: a session that only had the clock's own work to do (the weather,
+  the time, the place) ends 0.3 s after the last of it instead of 2.5 s; one that a key press or Spotify had a part in
+  keeps the 2.5 s. See [WiFi sync mode](#wifi-sync-mode).
+* What it should save, by a model on a PC (the UI loop of `tools/tests/test_radio.cpp` over a day of sync sessions,
+  with a current for each state from the datasheet, fitted to the owner's readings and to the run down to the
+  shutdown; model currents, not measurements): with the owner's settings plus light sleep and `display_power = low`
+  the clock draws 29.08 mA from the cell, against 31.08 with 1.13: 117 hours on the 3400 mAh cell instead of 109. The
+  chip is asleep 93 % of the time instead of 76, the radio on 1.69 % instead of 1.94, and the display's part is
+  1.16 mA instead of 1.63 by the model's straight line. No frame is late in it. With `display_low_hz = 1` it would be
+  about 0.08 mA less. With light sleep off almost nothing changes (41.7 mA, the 81 hours of the run down).
+* With light sleep the radio finds the processor up when it is wanted, and waits only for the UI loop to say so.
+* **Not yet tried on the board.**
 
 **1.13** (21 November 2026)
 

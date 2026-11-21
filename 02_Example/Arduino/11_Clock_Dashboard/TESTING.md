@@ -100,6 +100,10 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 
 37. **Not yet.** `light_sleep = on`, with the settings of 24 (`wifi_mode = sync`, `cpu_idle_mhz = 20`, `console` auto
     or off). Worth a run of its own in the log (the sheet's sixth line).
+    * New in 1.14, and the first things to look at: with the console off the processor stays at 80 MHz and sleeps,
+      where it used to go down to the idle clock; the chip wakes once a second, for the send and the next draw
+      together; and after a press it sleeps between the frames instead of staying awake for 8 seconds. None of it
+      has run on the board.
     * The meter on USB (5 V, battery out), with it on and with it off, ten seconds after the last button press: the
       estimate is about 15 mA (14 to 16) against the 21 mA of 24. Once the console is off the *Power* line of *Power
       and settings* should say `80 MHz (light sleep)` (with light sleep the idle clock is not used), and the *Sleep* row
@@ -117,7 +121,8 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 ## The display's low power mode (1.11)
 
 38. **Not yet.** `display_power = low`, with the settings of 37 (or of 24 if light sleep is off). Worth a run of its
-    own in the log (the sheet's seventh line).
+    own in the log (the sheet's seventh line). New in 1.14: the panel rests at 2 Hz, where it was 8, and the rate at
+    rest is a setting, `display_low_hz`, so the meter can compare them. None of the rates has been seen on the board.
     * The meter on USB (5 V, battery out), twenty seconds after the last button press, with `display_power = normal`,
       then with `low` at each `display_low_hz` in turn, 8, 4, 2 and 1 (`set display_low_hz = 4` in the serial console,
       or the settings file), nothing else changed (each is a restart): the differences are what each saves. The guess
