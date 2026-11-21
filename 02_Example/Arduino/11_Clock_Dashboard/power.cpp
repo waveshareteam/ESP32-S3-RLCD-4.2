@@ -47,7 +47,8 @@ struct IdfNap {
   // down now, or a change recorded before the interrupts were held off that the loop has not taken yet
   bool buttonDown() { return digitalRead(PIN_KEY) == LOW || digitalRead(PIN_BOOT) == LOW || buttonEdgesPending(); }
   int sleep(int32_t us) {
-    // (the whole nap: the SDK takes its own way in and out off it, so a late wake-up eats into light_sleep.h's guard)
+    // (the whole nap: the SDK takes its own way in and out off it, so a late wake-up eats into light_sleep.h's guard,
+    // and past that makes the send late)
     esp_sleep_enable_timer_wakeup((uint64_t)us);
     esp_sleep_enable_gpio_wakeup();  // (the levels are set on the pins by wakeOnButtons)
     const esp_err_t err = esp_light_sleep_start();

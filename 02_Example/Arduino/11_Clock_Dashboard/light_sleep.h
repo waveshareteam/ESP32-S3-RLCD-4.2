@@ -27,16 +27,20 @@
 //   * a sleep the SDK refused less than kRetryMs ago (every try costs the calibration);
 //   * the next step of the frame planner (frame_plan.h, FramePlanner::idleUs()), or anything else that is due
 //     (a banner to take down), closer than kMinSleepUs.
-// The sleep ends kGuardUs (plus 1/kGuardDiv of its length) before the first of those, so the loop finds things as
-// they would have been without it.  KEY and BOOT wake it at once (a low level on either pin).
+// The sleep ends 1/kGuardDiv of its length (plus kGuardUs, which is none) before the first of those, so the loop
+// finds things as they would have been without it, give or take the wake-up's own lateness (below).  KEY and BOOT
+// wake it at once (a low level on either pin).
 //
 // Why the guard can be this small: the RC clock that times the sleep is calibrated against the crystal before every
-// sleep, and the simulation (tools/tests/test_radio.cpp) lets a sleep wake up to 2 ms late, give or take 0.2 % of its
-// length, which the guard covers by itself.  What a later wake costs: the sleep before a send is aimed
-// FramePlanner::kWakeLeadUs (3 ms) ahead of it (FramePlanner::idleUs()), and the loop spins what is left (SEND in
-// loop()), so up to 3 ms more still puts the frame out on time; past that the frame goes out late by the rest, which
-// the Frames line counts once it is more than 30 ms.  A banner or slow work does not need the millisecond.
-// Stats::worstLateWakeUs() keeps how much later than asked a nap woke at worst (the console's power command prints
+// sleep, and the simulation (tools/tests/test_radio.cpp) lets a sleep wake up to 1 ms early or 2 ms late, give or take
+// 0.2 % of its length.  The guard is the 0.2 % and nothing more: it covers the RC clock's spread either way, and not
+// the wake-up's own lateness (up to 2 ms in the model, not measured on the board).  The sleep before a send is aimed
+// at the send itself (FramePlanner::kWakeLeadUs is 0, FramePlanner::idleUs()): a wake-up that comes early is spun or
+// napped into the send (SEND and SLEEP in loop()), and one that comes late begins the send at once, late by as much,
+// so in the model a send after a wake-up begins up to 2 ms after its moment, for a frame that reaches the glass 0 to
+// 125 ms after it is sent (display_power = low); the Frames line counts a frame late once it is more than 30 ms.  A banner comes down and
+// slow work starts as late, where the milliseconds do not matter.  Stats::worstLateWakeUs() keeps how much later than
+// asked a nap woke at worst, and so how late a send can have begun on the board (the console's power command prints
 // it, though with the console on the chip does not sleep).  None of it has been measured on the board.
 //
 // Keeping time.  The chip's timer stands still while it sleeps, and the SDK puts it forward afterwards by the time
@@ -62,7 +66,7 @@ namespace lightsleep {
 
 const int32_t kNever = INT32_MAX;       // "nothing due" for the times of Inputs
 const int32_t kMinSleepUs = 20000;      // a shorter sleep is not worth the way in and out (the SDK calibrates for ~4 ms)
-const int32_t kGuardUs = 2000;          // ... and every sleep ends this much early, plus 1/kGuardDiv of its length
+const int32_t kGuardUs = 0;             // ... and every sleep ends this much early (none), plus 1/kGuardDiv of its length
 const int32_t kGuardDiv = 500;          // (0.2 %: the RC clock's error over a sleep in the simulation, see above)
 const int32_t kMaxSleepUs = 2000000;    // never longer than this (the frames wake it every second anyway)
 const int64_t kWallStepUs = 2000;       // the time of day is corrected once the corrections add up to this
@@ -263,8 +267,8 @@ class Stats {
   uint32_t naps() const { return naps_; }
   uint32_t buttonWakes() const { return buttonWakes_; }
   uint32_t refused() const { return refused_; }
-  // The most a nap that the timer ended took beyond the time asked for (0: none did).  Past kGuardUs and 1/kGuardDiv
-  // of the length, the frame's own lead (FramePlanner::kWakeLeadUs) is what is left (see the top).
+  // The most a nap that the timer ended took beyond the time asked for (0: none did).  Past the guard (1/kGuardDiv of
+  // the length, and kGuardUs), that much is how late a send began after it (see the top).
   int64_t worstLateWakeUs() const { return worstLateWakeUs_; }
 
  private:
