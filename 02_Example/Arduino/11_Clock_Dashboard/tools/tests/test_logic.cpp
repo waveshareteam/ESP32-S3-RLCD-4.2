@@ -1202,7 +1202,7 @@ static void testFramePlan() {
   section("frame scheduling");
   using P = FramePlanner;
 
-  {  // quiet(): slow work only with plenty of time before the send (after 1.12 also while a frame waits for it, which
+  {  // quiet(): slow work only with plenty of time before the send (after 1.13 also while a frame waits for it, which
      // it now does for most of a second: until then nothing was quiet while one was prepared)
     P p(20000);
     CHECK(p.quiet(99, 100000));
@@ -1284,7 +1284,7 @@ static void testFramePlan() {
     ahead.drew(104, 30000, true);  // more than two seconds ahead: next() drops it
     CHECK(!ahead.quiet(101, 100000) && ahead.quiet(102, 100000));
   }
-  {  // the decisions at a few moments, with the default costs (send lead 35 ms).  After 1.12 the next second is drawn
+  {  // the decisions at a few moments, with the default costs (send lead 35 ms).  After 1.13 the next second is drawn
      // straight after a send, a second ahead, where it used to wait until 125 ms before its tick
     P p(20000);
     p.drew(500, 30000, false);
@@ -1490,7 +1490,7 @@ static void testFramePlan() {
     CHECK(framesAfterRecovery > 100);
     CHECK(wrongAfterRecovery == 0);
   }
-  {  // After 1.12 a frame waits in the buffer for most of a second, so a step of the clock (the hourly time sync: the radio
+  {  // After 1.13 a frame waits in the buffer for most of a second, so a step of the clock (the hourly time sync: the radio
      // is on and the loop awake) is likely to find one.  By half a second or three, either way, at 80 MHz and at 20: the
      // glass shows a wrong second only until the planner has caught up, never for a whole second, and the seconds after
      // it are on time.  A planner that kept the frame it had would show a wrong one for seconds (the check can fail).
@@ -1512,7 +1512,7 @@ static void testFramePlan() {
     CHECK(kept > 2000000);
   }
   {  // A forced redraw (a press, a banner) while a frame waits, at every 50 ms of the second: it shows the second it is
-     // (in the last stretch before the tick the one about to start, as in 1.12), every second after it is shown,
+     // (in the last stretch before the tick the one about to start, as in 1.13), every second after it is shown,
      // and each goes out on time
     for (int mhz : {80, 20}) {
       int runs = 0, wrongSec = 0, gaps = 0, offTime = 0;
@@ -1545,7 +1545,7 @@ static void testFramePlanPanel() {
   section("frame scheduling: the panel's refresh (display_power)");
   using P = FramePlanner;
   // the register and the figures: 25.5 Hz in the high power mode as before (HFRA 0), 1 Hz in the low one (LFRA 2, the
-  // value Waveshare's init writes; it was 8 Hz, LFRA 5, up to 1.12, then 4 Hz, LFRA 4, and 2 Hz, LFRA 3), and 8 Hz in
+  // value Waveshare's init writes; it was 8 Hz, LFRA 5, up to 1.13, then 4 Hz, LFRA 4, and 2 Hz, LFRA 3), and 8 Hz in
   // the low one for the seconds after a press (LFRA 5)
   CHECK((dispower::kFrameRate & 0x10) == 0 && (dispower::kFrameRate & 0x07) == 2 && (dispower::kFrameRate & 0xE8) == 0);
   CHECK(dispower::kFrameRate == 0x02);
@@ -1669,7 +1669,7 @@ static void testFramePlanPanel() {
     s = p.next(500, 462600, false);  // (from 537 ms before the tick: 22 ms to wait)
     CHECK(s.action == P::SLEEP && s.waitUs > 21000 && s.waitUs < 23000);
   }
-  {  // ... and slow work stops 480 ms earlier before it.  (Up to 1.12, at 8 Hz, the next second was also drawn 43 ms
+  {  // ... and slow work stops 480 ms earlier before it.  (Up to 1.13, at 8 Hz, the next second was also drawn 43 ms
      // earlier, 168 ms ahead instead of 125; it is drawn a second ahead now, whatever the figure.)
     P p(dispower::latencyUs(true, 20000));
     p.drew(500, 30000, false);

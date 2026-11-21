@@ -927,8 +927,8 @@ second over the run; the old schedule had 2.05), and with light sleep the proces
 | 40 | 13.7 mA | 94 % (90 %) | 1.8 mA (1.9) |
 | 80 (`off`) | 22.3 mA | 94 % (94 %) | 1.8 mA (1.8) |
 
-(With two sleeps a second, the schedule up to 1.12, it is 2.1 mA. With the chip kept awake for the 8 seconds after
-every press as well, and the idle clock between them, as up to 1.12, it was 2.5, 2.2 and 2.1 mA: a press every ten
+(With two sleeps a second, the schedule up to 1.13, it is 2.1 mA. With the chip kept awake for the 8 seconds after
+every press as well, and the idle clock between them, as up to 1.13, it was 2.5, 2.2 and 2.1 mA: a press every ten
 minutes is far more than most clocks get, so the real difference is smaller.)
 So with the owner's settings the chip should draw about 7 mA less at 3.3 V. The board turns the 5 V of USB into
 3.3 V (the charger's power path, then the buck-boost converter); at a guessed 85 % that is **about 5 mA less at 5 V:
@@ -975,7 +975,7 @@ and the clock against a phone in the morning), and the shutdown still waking by 
 
 `display_power = low` (`#define DISPLAY_POWER "low"`) switches the display's controller, a Sitronix ST7305, from its
 high power mode to its **low power mode**: it refreshes the panel once a second instead of 25.5 times, and 8 times a
-second for the seconds after a button press (8 all the time up to 1.12, then 4, then 2). **It is new in 1.11, off by
+second for the seconds after a button press (8 all the time up to 1.13, then 4, then 2). **It is new in 1.11, off by
 default and has not run on a board yet, and what it saves has not been measured.**
 
 **What the datasheet says** (ST7305 version 0.2, April 2021,
@@ -986,7 +986,7 @@ default and has not run on a board yet, and what it saves has not been measured.
   board writes, which the clock has always used. In the low power mode it does it 0.25 to 8 times a second. A reset
   leaves it in the high power mode; Sitronix's own sample start-up ends in the low one.
 * Waveshare's start-up sets the low power mode's rate to once a second, and never switches to it. The clock now keeps
-  that rate (`FRCTRL`, `B2h` = `0x02`, Waveshare's value; up to 1.12 it was 8, `0x05`, then 4, `0x04`, and 2, `0x03`),
+  that rate (`FRCTRL`, `B2h` = `0x02`, Waveshare's value; up to 1.13 it was 8, `0x05`, then 4, `0x04`, and 2, `0x03`),
   writes `0x05` (8) into the same register for the seconds after a press and `0x02` again after them, with the panel
   staying in the low power mode, and leaves the high power mode's rate alone: with `display_power = normal` nothing
   should look different.
@@ -1020,11 +1020,11 @@ it happens. Two board probes are written up for it in the battery loop's notes (
 second (a counter beside the seconds for ten minutes at 1 Hz and at 2 Hz), and round 4, whether a command starts the
 refresh afresh.
 
-Up to 1.12 the low power mode ran at 8 Hz, the fastest it has, for the seconds' sake: they changed within about 63 ms
+Up to 1.13 the low power mode ran at 8 Hz, the fastest it has, for the seconds' sake: they changed within about 63 ms
 of the real second, then at 4 Hz within about 125 ms, and at 2 Hz within about 250. It runs at 1 Hz now for the
 current, the slowest rate with a refresh for every second: by the straight line below some 0.08 mA less than at 2 Hz
 and 0.55 mA less than at 8 (at 3.3 V). The seconds pay for it: half a second either way, eight times the spread of
-1.12, and a skipped or doubled second now and then. Whether that is worth it is the owner's call; the setting is off
+1.13, and a skipped or doubled second now and then. Whether that is worth it is the owner's call; the setting is off
 by default.
 
 **Whether a frame is torn** is the other open question, and at 1 Hz it would show more. The datasheet's

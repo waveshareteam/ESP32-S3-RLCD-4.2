@@ -1494,7 +1494,7 @@ void testFramePlanClock() {
   CHECK(frames > 250);
   CHECK(lateFrames <= 2);  // a frame or two at the moment of a switch is what it costs; the rest is on time
 
-  // After 1.12 a frame is prepared for most of a second, so the clock mostly changes while one waits to be sent: up at
+  // After 1.13 a frame is prepared for most of a second, so the clock mostly changes while one waits to be sent: up at
   // once, down only when the planner is quiet (clock_policy.h).  The send cost is what scales for that frame; it still
   // goes out on time, and so does every one after it.  The clock wants the other speed every 3.7 s, so the switches
   // land all over the second.
@@ -1666,7 +1666,7 @@ void testFramePlanIdle() {
     CHECK(misses == 0 && probes > 20000);
   }
   // the probes can fail: four ways of getting it wrong, each caught, and the two aims there were before (the sleep aimed
-  // at the send itself, and kSpinUs ahead of it, where it is kWakeLagUs past it now).  (Up to 1.12 the planner waited
+  // at the send itself, and kSpinUs ahead of it, where it is kWakeLagUs past it now).  (Up to 1.13 the planner waited
   // before it drew the next second, and two of these were about that wait; the next second is drawn at once now, so
   // they are about the wait before the send.)
   auto pastSend = [](const FramePlanner &p, time_t s, int32_t u) {  // aimed 4 ms further past the send (9 ms)
@@ -1681,7 +1681,7 @@ void testFramePlanIdle() {
     const int32_t id = p.idleUs(s, u), less = FramePlanner::kSpinUs + FramePlanner::kWakeLagUs;
     return id > less ? id - less : 0;
   };
-  auto waitToDraw = [](const FramePlanner &p, time_t s, int32_t u) {  // the wait before the draw that there was up to 1.12
+  auto waitToDraw = [](const FramePlanner &p, time_t s, int32_t u) {  // the wait before the draw that there was up to 1.13
     if (!p.prepared() && (p.lastSentSec() == s || p.lastSentSec() == s + 1)) {
       const int32_t lead = (int32_t)(p.sendCostUs() + p.drawCostUs()) + p.latencyUs() + 60000;
       const int32_t until = (p.lastSentSec() == s + 1 ? 1000000 : 0) + 1000000 - u - lead;
@@ -1767,7 +1767,7 @@ void testLightSleepDecide() {
     CHECK(!d.sleep && d.why == c.why);
   }
   // the poke window (a press in the last kPokeMs) keeps only the CPU clock up: on its own it sleeps as long as with
-  // nothing at all (up to 1.12 it kept the chip awake, BUTTON)
+  // nothing at all (up to 1.13 it kept the chip awake, BUTTON)
   {
     Inputs poked = base;
     poked.poked = true;
@@ -2353,7 +2353,7 @@ void testWallFix() {
   }
 }
 
-// The schedule the frame planner had up to 1.12, for the negative controls: the next second was drawn only when its
+// The schedule the frame planner had up to 1.13, for the negative controls: the next second was drawn only when its
 // draw had to begin (the send, the draw and 60 ms to spare before its tick), and nothing was quiet while a frame
 // waited, so a second had two sleeps, one until the draw and a short one between the draw and the send.  (FramePlanner
 // with that wait put back in front of it.)
@@ -2417,7 +2417,7 @@ struct WindowOnly : FramePlanner {
 // calibrates the RC clock for some 4 ms, and takes that off the time asked for), and wakes up to 1 ms early or 2 ms
 // late, give or take 0.2 % of its length.  Stalls (a flash write, the radio stack: work of the other core) come at
 // random moments while the chip is awake; while it sleeps the other core sleeps too.  `Plan` is the frame planner, or
-// for the negative controls the schedule it had up to 1.12 (DrawLate, below), an earlier aim of the sleep before a send
+// for the negative controls the schedule it had up to 1.13 (DrawLate, below), an earlier aim of the sleep before a send
 // (OldLead, Lead3, AtSend) or quiet() by the tick (QuietByTick).  With `busyLatencyUs`, display_power = low with its faster rate after a press: the planner gets that figure
 // at the press (poke() in the sketch) and its own back once dispower::kBusyMs are over, with a frame prepared whose send
 // is far enough off for the longer lead (serviceDisplayRate(), dispower::mayRest()).
@@ -2487,7 +2487,7 @@ struct SleepLoop {
       if (us <= 0) return;
       const int64_t from = t;
       // A stall freezes the loop (a flash write, the radio stack) wherever it happens while the chip is awake.  (Up to
-      // 1.12 one that fell due in a sleep came at its start and made it end that much late, as if the time asleep were
+      // 1.13 one that fell due in a sleep came at its start and made it end that much late, as if the time asleep were
       // awake: that put a stall at every sleep's start with a chance that grew with the sleep, which is not how it
       // goes on the chip, where only the few milliseconds of the way in are exposed, and those are spent WORKING.)
       while (kind != ASLEEP && t + us >= nextStall) {
@@ -2701,7 +2701,7 @@ struct SleepLoop {
   }
 };
 
-// The rule up to 1.12, to compare with: the 8 seconds after a press (Inputs::poked, with the clock's rule of then:
+// The rule up to 1.13, to compare with: the 8 seconds after a press (Inputs::poked, with the clock's rule of then:
 // SleepLoop::idleBetween) kept the chip awake as well.
 lightsleep::Decision decidePokeAwake(const lightsleep::Inputs &in) {
   lightsleep::Decision d = lightsleep::decide(in);
@@ -2877,7 +2877,7 @@ void testLightSleepLoop() {
   const uint64_t kSeed = 29;
   double onChipMa = -1;  // (with the first idle clock: light sleep keeps the working clock, so the others give the same)
   for (int mhz : {20, 40, 80}) {
-    SleepLoop off, on, late, before, console;  // (late: the schedule up to 1.12, DrawLate; before: the idle clock between
+    SleepLoop off, on, late, before, console;  // (late: the schedule up to 1.13, DrawLate; before: the idle clock between
                                                // the presses, as up to this change; console: the console on)
     off.lightSleep = false;
     before.idleBetween = true;
@@ -2892,7 +2892,7 @@ void testLightSleepLoop() {
     printf("  idle clock %d MHz: asleep %.1f %% of the time, working %.1f %%, awake and idle %.1f %%; the chip %.1f mA without, %.1f mA with"
            " (datasheet model)\n",
            mhz, 100.0 * on.asleepUs / on.totalUs, 100.0 * on.workUs / on.totalUs, 100.0 * on.idleUs / on.totalUs, off.chipMa, on.chipMa);
-    printf("    %.2f sleeps a second (%.2f with the draw left until just before the send, as up to 1.12, and %.2f mA)\n", perSec, perSecLate,
+    printf("    %.2f sleeps a second (%.2f with the draw left until just before the send, as up to 1.13, and %.2f mA)\n", perSec, perSecLate,
            late.chipMa);
     printf("    frames late: %d of %d with (worst %.1f ms), %d of %d without (worst %.1f ms); battery read %.1f s apart at worst; log lines"
            " %.2f s late at worst; presses taken %.1f ms after at worst, %.1f ms when it slept; banner down %.1f ms late at worst, %.1f ms"
@@ -2906,7 +2906,7 @@ void testLightSleepLoop() {
     // which comes on top of the 5 ms this allowed when the sleep was aimed at the send itself)
     CHECK(on.worstLateUs <= off.worstLateUs + 5000 + FramePlanner::kWakeLagUs);
     CHECK(off.asleepUs == 0 && off.sleeps == 0);
-    // one sleep a second after 1.12 (the send and the draw are one stretch awake), where there were two (up to 1.12 this
+    // one sleep a second after 1.13 (the send and the draw are one stretch awake), where there were two (up to 1.13 this
     // checked for more than one a second); the time with the radio on or a button pressed has none
     CHECK(perSec > 0.95 && perSec < 1.05);
     CHECK(perSecLate > 1.8);  // (the old schedule: the check can fail)
@@ -2944,14 +2944,14 @@ void testLightSleepLoop() {
       CHECK(before.chipMa == on.chipMa && before.asleepUs == on.asleepUs && before.slowUs == 0 && console.slowUs == 0);
     }
     // the 8 seconds after a press (dispower::kBusyMs) keep the chip no longer awake: asleep for most of them, where it
-    // was never asleep with the rule up to 1.12; frames, presses and banners on time as above (a banner within a frame
+    // was never asleep with the rule up to 1.13; frames, presses and banners on time as above (a banner within a frame
     // at 80 MHz, as a press)
     SleepLoop pokeAwake;
     pokeAwake.idleMhz = mhz;
     pokeAwake.idleBetween = true;  // (the clock as it was then: 8 seconds fast after a press, the idle clock otherwise)
     pokeAwake.decide = decidePokeAwake;
     pokeAwake.run(kSeconds, kSeed);
-    printf("    the %u s after a press: asleep %.1f %% of them (%.1f %% with the rule up to 1.12); banners down %.1f ms late at worst"
+    printf("    the %u s after a press: asleep %.1f %% of them (%.1f %% with the rule up to 1.13); banners down %.1f ms late at worst"
            " (%.1f); the chip %.2f mA (%.2f)\n",
            (unsigned)(dispower::kBusyMs / 1000), 100.0 * on.asleepPokedUs / on.pokedUs, 100.0 * pokeAwake.asleepPokedUs / pokeAwake.pokedUs,
            on.worstBannerUs / 1000.0, pokeAwake.worstBannerUs / 1000.0, on.chipMa, pokeAwake.chipMa);
@@ -2975,7 +2975,7 @@ void testLightSleepLoop() {
            off.worstPressUs / 1000.0, 100.0 * on.asleepUs / on.totalUs);
     CHECK(on.late <= off.late + 2);
     CHECK(on.worstPressUs <= off.worstPressUs + 5000);
-    // and against the schedule up to 1.12, over three hours: a stall in the draw no longer makes its second late, only
+    // and against the schedule up to 1.13, over three hours: a stall in the draw no longer makes its second late, only
     // one in the send, or in the few milliseconds awake before it
     int lateNew = 0, lateOld = 0, framesNew = 0;
     for (uint64_t seed : {9, 10, 11}) {
@@ -2988,12 +2988,12 @@ void testLightSleepLoop() {
       lateOld += b.late;
       framesNew += a.frames;
     }
-    printf("    over three hours: %d of %d frames late, %d with the draw left until just before the send (up to 1.12)\n", lateNew, framesNew,
+    printf("    over three hours: %d of %d frames late, %d with the draw left until just before the send (up to 1.13)\n", lateNew, framesNew,
            lateOld);
     CHECK(lateNew < lateOld);
   }
   {  // one draw in ten held up by a stall of 20 to 300 ms, at the idle clock of 20 MHz and with light sleep, over three hours:
-     // drawn a second ahead, no second is late; drawn just in time (up to 1.12), many are.  (Not quite none: the draw
+     // drawn a second ahead, no second is late; drawn just in time (up to 1.13), many are.  (Not quite none: the draw
      // after a redraw forced some 100 to 400 ms before a tick is just in time too, and then one held up is late, in about
      // a third of the seeds, one frame in some 30,000 over 300 of them, with the sleep before a send aimed at it or past
      // it alike.  Seed 33 had none until the sleep was aimed past the send, which moves every run's random draws; 36 is
@@ -3010,7 +3010,7 @@ void testLightSleepLoop() {
     CHECK(on.late == 0 && on.worstLateUs <= 30000);
     CHECK(late.late > 100);  // (the check can fail)
     // the slow work still runs: the battery every 5 s, and a line of the log (which starts only early in a second, after
-    // the draw after 1.12: one held up past that waits a second)
+    // the draw after 1.13: one held up past that waits a second)
     CHECK(on.worstBatteryGapUs <= 10000000 && on.logLines >= kSeconds / 600 - 1 && on.worstLogLateUs < 2000000);
   }
   {  // display_power = low: every frame goes out 480 ms earlier in its second (the panel takes that much longer); no more

@@ -134,7 +134,7 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
     * Each change of the seconds all at once: the top and bottom of a digit changing together, not one part first
       and the rest up to a second later (a phone's slow motion video shows it; README: "Whether a frame is torn").
     * Buttons and page changes still feel immediate: the panel goes to 8 Hz with the press, so up to 125 ms before
-      they show, as up to 1.12. A press that takes up to a second to show means the new rate waits for the slow
+      they show, as up to 1.13. A press that takes up to a second to show means the new rate waits for the slow
       refresh under way.
     * The change of rate itself: no flash, jump or change of contrast at a press, or eight or nine seconds after it when
       the rate goes back to 1 Hz (watch the *Display* row change). For the seconds after a press they should be within

@@ -19,7 +19,7 @@
 //
 // What follows from that and is not written there: a frame is on the glass when the panel next refreshes its rows,
 // 0 to 39 ms after the transfer in HPM and 0 to 1000 ms after it at 1 Hz.  The clock times its frames for the middle
-// of that (frame_plan.h), so in LPM the seconds change up to about 500 ms early or late instead of 20.  Up to 1.12
+// of that (frame_plan.h), so in LPM the seconds change up to about 500 ms early or late instead of 20.  Up to 1.13
 // LPM ran at 8 Hz, the fastest it goes, with the seconds within about 63 ms, then at 4 Hz, within about 125 ms, and
 // then at 2 Hz, within about 250 ms.  1 Hz, the slowest rate with a refresh for every second, is chosen for the
 // current: drawn as a straight line through the only two published figures (README: "The display's low power mode")

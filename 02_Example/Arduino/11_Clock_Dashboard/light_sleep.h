@@ -25,7 +25,7 @@
 //   * a button that is down, a gesture that is still being timed (the debounce, the gap after a click before it is
 //     reported: ClickDetector::pending()), or a change of one that the interrupts recorded and the loop has not taken
 //     yet.  Once the gesture has been reported and its answer drawn, it sleeps again between the frames: the seconds
-//     after a press keep nothing awake (up to 1.12 the 8 seconds after it kept the chip awake, at the working clock);
+//     after a press keep nothing awake (up to 1.13 the 8 seconds after it kept the chip awake, at the working clock);
 //   * anything else that keeps the loop busy: a redraw that is due, the cube, a restart, a press that the network
 //     task has not acted on yet (Handoff, below);
 //   * slow work that is due (the sensors, the battery, a line of the power log) and can run now; when it has to
