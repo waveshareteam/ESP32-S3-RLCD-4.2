@@ -228,15 +228,36 @@ static void handleBoot(ClickEvent e) {
   s_forceRedraw = true;
 }
 
-// display_power: how the controller drives the panel (its low power mode at 4 Hz, or the high one at 25.5 Hz,
-// display_power.h), and the frame timing that goes with it.  The cube runs in the high power mode whatever the
-// setting: it sends frames as fast as it can draw them, and 4 a second would make it judder.  A switch takes 120 ms
-// into the low power mode and 320 ms out of it (the datasheet's waits).
+// display_power: how the controller drives the panel (its low power mode at 2 Hz, 8 Hz while a button was pressed a
+// moment ago, or the high one at 25.5 Hz, display_power.h), and the frame timing that goes with it.  The cube runs in
+// the high power mode whatever the setting: it sends frames as fast as it can draw them, and 8 a second would make it
+// judder.  A switch takes 120 ms into the low power mode and 320 ms out of it (the datasheet's waits); a change of the
+// low one's rate is one command.  The faster rate comes at once with a press (poke()), the slower one back only at a
+// quiet moment (serviceDisplayRate()).
 static void applyDisplayPower() {
   if (!s_lcd) return;
   const bool low = g_cfg.displayPower == DISPPOWER_LOW && !s_cubeOn;
+  const bool busy = low && s_pokeUntilMs != 0;
   s_lcd->setLowPower(low);
-  s_planner.setLatencyUs(dispower::latencyUs(low, DISPLAY_LATENCY_MS * 1000));
+  s_lcd->setLowRate(busy);
+  s_planner.setLatencyUs(dispower::latencyUs(low, DISPLAY_LATENCY_MS * 1000, busy));
+}
+
+// A button is down, or was a moment ago: the answer is drawn at the working clock (cpu_idle_mhz) for kPokeMs, and with
+// display_power = low the panel refreshes 8 times a second meanwhile, so that it is on the glass soon.
+static void poke(uint32_t nowMs) {
+  s_pokeUntilMs = (nowMs + clockpolicy::kPokeMs) | 1u;
+  if (s_lcd && s_lcd->lowPower() && !s_lcd->lowRateBusy()) applyDisplayPower();
+}
+
+// display_power = low: back to 2 Hz once the seconds after a press are over, at a quiet moment with a frame prepared
+// (dispower::mayRest()), so the frame that waits goes out by the longer lead in time.  Called every time round the loop.
+// (With a sweeping second hand nothing is prepared or timed: any moment will do.)
+static void serviceDisplayRate(int32_t usec) {
+  const bool prepared = s_planner.prepared() || CLOCK_SWEEP_FPS > 0;
+  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_pokeUntilMs != 0, prepared, s_planner.quiet(usec))) {
+    applyDisplayPower();
+  }
 }
 
 // Before every deep sleep: the panel shows the battery-empty screen for as long as the clock sleeps, days perhaps,
@@ -319,8 +340,9 @@ static void pollButtons(uint32_t nowMs) {
   // the end of a press be missing from it, the press still gets the time it lasted)
   ClickEvent k = buttonEdgesOn() ? s_key.edge(keyDown, nowMs) : s_key.update(keyDown, nowMs);
   ClickEvent b = buttonEdgesOn() ? s_boot.edge(bootDown, nowMs) : s_boot.update(bootDown, nowMs);
-  // a button is down, or was a moment ago: the answer is drawn at the working clock (cpu_idle_mhz)
-  if (active || keyDown || bootDown || k != CLICK_NONE || b != CLICK_NONE) s_pokeUntilMs = (nowMs + clockpolicy::kPokeMs) | 1u;
+  // a button is down, or was a moment ago: the answer is drawn at the working clock (cpu_idle_mhz), and with
+  // display_power = low the panel's faster rate is set before it is sent
+  if (active || keyDown || bootDown || k != CLICK_NONE || b != CLICK_NONE) poke(nowMs);
   if (k != CLICK_NONE && !muted) onKey(k);
   if (b != CLICK_NONE && !muted) onBoot(b);
 
@@ -777,10 +799,13 @@ static void buildInfoPower(UiModel &m, const SharedState &s) {
     snprintf(v, sizeof v, "at %.2f V, back on at %.2f V", (double)g_cfg.batteryCutoffV, (double)lowbat::kRestartV);
   }
   add("Shutdown", v);
-  // display_power = low: say so, and whether the panel is in it now.  (On a page with room for it and the three rows
-  // below: on the fullest page, with the PSRAM warning and the log's two rows, it is the one left out.)
+  // display_power = low: say so, whether the panel is in it now, and at which rate (8 Hz for the seconds after a
+  // button press, so on a page just turned to; 2 Hz once they are over).  (On a page with room for it and the three
+  // rows below: on the fullest page, with the PSRAM warning and the log's two rows, it is the one left out.)
   if (g_cfg.displayPower == DISPPOWER_LOW && n < UI_INFO_LINES - 3 - spare) {
-    add("Display", s_lcd && s_lcd->lowPower() ? "low power mode, 4 Hz refresh" : "low power mode chosen, not in it");
+    add("Display", !(s_lcd && s_lcd->lowPower()) ? "low power mode chosen, not in it"
+                   : s_lcd->lowRateBusy()        ? "low power mode, 8 Hz refresh"
+                                                 : "low power mode, 2 Hz refresh");
   }
 
   // (a line holds 42 characters of value)
@@ -1231,7 +1256,9 @@ static void serviceSerial() {
                       s_audioStandby < 0 ? "left alone (AUDIO_CHIPS_STANDBY 0)"
                                          : (s_audioStandby == (AUDIO_CODEC_ANSWERED | AUDIO_MIC_ADC_ANSWERED) ? "both powered down" : "not both answered (see the start of the log)"));
         Serial.printf("display: %s; frames timed for %d ms on the way to the glass\n",
-                      s_lcd && s_lcd->lowPower() ? "low power mode, 4 Hz (display_power = low)" : "high power mode, 25.5 Hz",
+                      !(s_lcd && s_lcd->lowPower()) ? "high power mode, 25.5 Hz"
+                      : s_lcd->lowRateBusy()        ? "low power mode, 8 Hz after a button press (display_power = low; 2 Hz at rest)"
+                                                    : "low power mode, 2 Hz (display_power = low; 8 Hz after a button press)",
                       (int)(s_planner.latencyUs() / 1000));
         if (g_cfg.lightSleep) {  // (with the console on these stay at 0: the console keeps the chip awake)
           char row[lightsleep::kRow];
@@ -1522,7 +1549,7 @@ static void cubeFrame(uint32_t nowMs) {
     cubeEnd();
     return;
   }
-  s_pokeUntilMs = (nowMs + clockpolicy::kPokeMs) | 1u;  // at the working clock, as after a button press (cpu_idle_mhz)
+  poke(nowMs);  // at the working clock, as after a button press (cpu_idle_mhz; the panel is in its high power mode)
   const float dtMs = (float)(uint32_t)(nowMs - s_cubeFrameMs);
   s_cubeFrameMs = nowMs;
   s_cube.turnMs += dtMs;
@@ -1635,6 +1662,7 @@ void loop() {
   watchClock(tv);
   spotifySetPageShown(s_page == PAGE_NOW_PLAYING);  // wifi_mode = sync: the Now Playing page keeps the radio on
   serviceClock(nowMs, (int32_t)tv.tv_usec);
+  serviceDisplayRate((int32_t)tv.tv_usec);
   if (s_cubeOn) {  // (see cubeFrame)
     cubeFrame(nowMs);
     return;

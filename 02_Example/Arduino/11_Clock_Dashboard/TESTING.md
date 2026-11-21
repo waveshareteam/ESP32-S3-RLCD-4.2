@@ -116,16 +116,22 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 
 38. **Not yet.** `display_power = low`, with the settings of 37 (or of 24 if light sleep is off). Worth a run of its
     own in the log (the sheet's seventh line).
-    * The meter on USB (5 V, battery out), ten seconds after the last button press, with `display_power = low` and with
-      `normal`, nothing else changed (each is a restart): the difference is what it saves. The guess is about 1.2 mA;
-      nothing published says more, so anything from nothing to 2 mA would not be a surprise. The *Power and settings*
-      page should have a *Display* row saying `low power mode, 4 Hz refresh`.
-    * The picture at 4 refreshes a second next to 25.5: contrast and legibility in daylight and in lamp light, and
+    * The meter on USB (5 V, battery out), twenty seconds after the last button press, with `display_power = low` and
+      with `normal`, nothing else changed (each is a restart): the difference is what it saves. The guess is about
+      1.3 mA; nothing published says more, so anything from nothing to 2 mA would not be a surprise. The *Power and
+      settings* page should have a *Display* row saying `low power mode, 8 Hz refresh` just after the press that turned
+      to it, and `low power mode, 2 Hz refresh` some ten seconds later (at most about 14).
+    * The picture at 2 refreshes a second next to 25.5: contrast and legibility in daylight and in lamp light, and
       from the side; no flicker or shimmer, no smearing of the seconds, no ghost of the digits before.
-    * The seconds against a reference (a phone's clock with seconds, or a radio time signal): they should change within
-      about an eighth of a second of it, sometimes a little before and sometimes a little after, drifting slowly
-      between the two; never clearly late.
-    * Buttons and page changes still feel immediate (up to 250 ms instead of 39 before they show).
+    * The seconds against a reference (a phone's clock with seconds, or a radio time signal), with no button touched
+      for a minute: they should change within about a quarter of a second of it, sometimes a little before and
+      sometimes a little after, drifting slowly between the two; never clearly late.
+    * Buttons and page changes still feel immediate: the panel goes to 8 Hz with the press, so up to 125 ms before
+      they show, as up to 1.12. A press that takes up to half a second to show means the new rate waits for the slow
+      refresh under way.
+    * The change of rate itself: no flash, jump or change of contrast at a press, or about ten seconds after it when
+      the rate goes back to 2 Hz (watch the *Display* row change). For the seconds after a press they should be within
+      about a sixteenth of a second of the reference.
     * The cubes: they run in the high power mode, so they should look as smooth as with `normal`; starting one takes
       about a third of a second longer, and afterwards the *Display* row is back.
     * After a day: the *Frames* line, no more late frames than without it.

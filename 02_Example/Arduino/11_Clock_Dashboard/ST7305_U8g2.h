@@ -24,6 +24,7 @@ private:
   volatile bool _invert = false;
   bool _busHeld = false;  // begin() starts one long SPI transaction, see busRelease()
   bool _lowPower = false;  // the panel is driven in the low power mode (fullInit() leaves it in the high one)
+  uint8_t _rate = 0;       // what B2h holds: fullInit(), setLowRate() and setRestMode() write it, nothing else changes it
 
   void _cmd(uint8_t cmd);
   void _data(const uint8_t *data, size_t len);
@@ -48,11 +49,18 @@ public:
   void setInvert(bool invert) { _invert = invert; }
   bool invert() const { return _invert; }
 
-  // The controller's low power mode (4 Hz refresh) or its high power mode (25.5 Hz, what fullInit() leaves), by the
-  // datasheet's sequence: 120 ms into the low one, 320 ms out of it, spent in delay().  Nothing is sent when the
-  // panel is in that mode already.  A frame shows up later in the low one: see display_power.h.
+  // The controller's low power mode (2 Hz refresh as fullInit() sets it, see setLowRate()) or its high power mode
+  // (25.5 Hz, what fullInit() leaves), by the datasheet's sequence: 120 ms into the low one, 320 ms out of it, spent
+  // in delay().  Nothing is sent when the panel is in that mode already.  A frame shows up later in the low one: see
+  // display_power.h.
   void setLowPower(bool low);
   bool lowPower() const { return _lowPower; }
+
+  // In the low power mode: its rate at rest (2 Hz) or for the seconds after a button press (`busy`, 8 Hz), by one
+  // command with one parameter (B2h) and no wait.  Nothing is sent in the high power mode, or when the panel has that
+  // rate already.  The rate stays through a switch between the modes, so call it again after setLowPower().
+  void setLowRate(bool busy);
+  bool lowRateBusy() const;  // in the low power mode, at the rate for after a press
 
   // For the deep-sleep shutdown: the low power mode at its slowest refresh, 0.25 Hz (display_power.h), with the
   // picture left as it is.  The rate is written in the high power mode, as fullInit() writes it, so it takes up to

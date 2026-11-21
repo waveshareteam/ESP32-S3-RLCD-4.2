@@ -185,10 +185,11 @@
 # light_sleep = off
 #
 # normal or low: how the display's controller drives the panel.  Low is its low power mode,
-# which refreshes the panel 4 times a second instead of 25.5: less current (how much has not
-# been measured), and a frame shows up 0 to 250 ms after it is sent instead of 0 to 39.  The
-# clock allows for that, so the seconds change up to about 125 ms early or late instead of
-# 20.  Not yet tried on the board; see the README.
+# which refreshes the panel 2 times a second instead of 25.5 (8 times for the seconds after
+# a button press): less current (how much has not been measured), and a frame shows up 0 to
+# 500 ms after it is sent instead of 0 to 39.  The clock allows for that, so the seconds
+# change up to about 250 ms early or late instead of 20.  Not yet tried on the board; see
+# the README.
 # display_power = normal
 
 # ---- Weather -----------------------------------------------------

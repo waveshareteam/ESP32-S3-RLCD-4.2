@@ -1463,9 +1463,10 @@ static void testFramePlan() {
 static void testFramePlanPanel() {
   section("frame scheduling: the panel's refresh (display_power)");
   using P = FramePlanner;
-  // the register and the figures: 25.5 Hz in the high power mode as before (HFRA 0), 4 Hz in the low one (LFRA 4; it
-  // was 8 Hz, LFRA 5, up to 1.12)
-  CHECK((dispower::kFrameRate & 0x10) == 0 && (dispower::kFrameRate & 0x07) == 4 && (dispower::kFrameRate & 0xE8) == 0);
+  // the register and the figures: 25.5 Hz in the high power mode as before (HFRA 0), 2 Hz in the low one (LFRA 3; it
+  // was 8 Hz, LFRA 5, up to 1.12, then 4 Hz, LFRA 4), and 8 Hz in the low one for the seconds after a press (LFRA 5)
+  CHECK((dispower::kFrameRate & 0x10) == 0 && (dispower::kFrameRate & 0x07) == 3 && (dispower::kFrameRate & 0xE8) == 0);
+  CHECK((dispower::kBusyFrameRate & 0x10) == 0 && (dispower::kBusyFrameRate & 0x07) == 5 && (dispower::kBusyFrameRate & 0xE8) == 0);
   // for the deep-sleep shutdown: the same high power rate, the low one at its slowest (LFRA 0 = 0.25 Hz), nothing else
   CHECK((dispower::kRestFrameRate & 0x10) == (dispower::kFrameRate & 0x10) && (dispower::kRestFrameRate & 0x07) == 0 &&
         (dispower::kRestFrameRate & 0xE8) == 0);
@@ -1473,12 +1474,96 @@ static void testFramePlanPanel() {
      // (the datasheet's table, display_power.h), 6 and 7 are none of them.  One changed without the other fails here.
     const int32_t lpmPeriodUs[8] = {4000000, 2000000, 1000000, 500000, 250000, 125000, 0, 0};
     CHECK(lpmPeriodUs[dispower::kFrameRate & 0x07] == dispower::kLpmFrameUs);
+    CHECK(lpmPeriodUs[dispower::kBusyFrameRate & 0x07] == dispower::kLpmBusyFrameUs);
     CHECK((dispower::kFrameRate & 0x10) == 0 && dispower::kHpmFrameUs == 39216);  // HFRA 0 with OSCSET 0x80: 25.5 Hz
-    CHECK(lpmPeriodUs[5] != dispower::kLpmFrameUs && lpmPeriodUs[3] != dispower::kLpmFrameUs);  // (LFRA 5 or 3 would fail)
+    CHECK(lpmPeriodUs[4] != dispower::kLpmFrameUs && lpmPeriodUs[2] != dispower::kLpmFrameUs);  // (LFRA 4 or 2 would fail)
+    CHECK(lpmPeriodUs[4] != dispower::kLpmBusyFrameUs && lpmPeriodUs[3] != dispower::kLpmBusyFrameUs);  // (... and here 4 or 3)
+    // the helpers give the one or the other
+    CHECK(dispower::frameRate(false) == dispower::kFrameRate && dispower::frameRate(true) == dispower::kBusyFrameRate);
+    CHECK(dispower::lpmFrameUs(false) == dispower::kLpmFrameUs && dispower::lpmFrameUs(true) == dispower::kLpmBusyFrameUs);
   }
-  CHECK(dispower::latencyUs(false, 20000) == 20000);
+  CHECK(dispower::latencyUs(false, 20000) == 20000 && dispower::latencyUs(false, 20000, true) == 20000);
   CHECK(dispower::latencyUs(true, 20000) == 20000 + dispower::kExtraLatencyUs);
-  CHECK(dispower::kExtraLatencyUs > 104500 && dispower::kExtraLatencyUs < 106000);  // (250 - 39.2) / 2 ms
+  CHECK(dispower::latencyUs(true, 20000) == dispower::latencyUs(true, 20000, false));  // (the two-argument one: at rest)
+  CHECK(dispower::latencyUs(true, 20000) == 20000 + (500000 - 39216) / 2);             // 250.4 ms
+  CHECK(dispower::kExtraLatencyUs > 229500 && dispower::kExtraLatencyUs < 231500);     // (500 - 39.2) / 2 ms
+  CHECK(dispower::latencyUs(true, 20000, true) == 20000 + (125000 - 39216) / 2);       // after a press: 62.9 ms
+  CHECK(dispower::kBusyExtraLatencyUs > 42000 && dispower::kBusyExtraLatencyUs < 43500);  // (125 - 39.2) / 2 ms
+  {  // what B2h holds, by the driver's calls as applyDisplayPower() makes them (ST7305_U8g2: fullInit(), setLowPower(),
+     // setLowRate() with rateNeedsWrite(), setRestMode()): one write for each change of the rate in the low power mode,
+     // none in the high one or when nothing changes, and in the low power mode the panel always has the rate asked for.
+     // 38h and 39h leave B2h alone, so the driver keeps what it wrote through a switch between the modes.
+    struct Panel {
+      bool lpm = false;
+      uint8_t reg = 0, known = 0;  // what B2h holds, and what the driver takes it to hold
+      int writes = 0, wrong = 0;   // B2h written, and times the panel was left in LPM at another rate than asked for
+      bool (*needs)(bool, uint8_t, bool) = dispower::rateNeedsWrite;
+      bool forgets = false;        // (a driver that takes the rate to be the one at rest after a switch: wrong)
+      void fullInit() {
+        lpm = false;
+        reg = known = dispower::kFrameRate;
+      }
+      void apply(bool low, bool busy) {  // applyDisplayPower()
+        if (low != lpm) {
+          lpm = low;  // (the datasheet's sequence, setLowPower())
+          if (forgets) known = dispower::kFrameRate;
+        }
+        if (needs(lpm, known, busy)) {  // setLowRate()
+          reg = known = dispower::frameRate(busy);
+          writes++;
+        }
+        if (lpm && reg != dispower::frameRate(busy)) wrong++;
+      }
+      void restMode() {  // setRestMode(): the rate written in HPM, then into LPM
+        lpm = false;
+        reg = known = dispower::kRestFrameRate;
+        lpm = true;
+      }
+    };
+    // the clock's day with display_power = low (`low`; else normal, the high power mode throughout): the start, a press,
+    // more of them while its seconds run, those over, another press, the high power mode while its seconds run (the
+    // cube), back in the low one at rest, the shutdown.  The busy rate is asked for with every press, also in the high
+    // power mode (where applyDisplayPower() does not ask for it), so that the driver's own rule is what is checked.
+    auto day = [](Panel &d, bool low) {
+      std::vector<int> w;
+      d.fullInit();
+      d.apply(low, false);
+      w.push_back(d.writes);
+      d.apply(low, true);  // a press
+      w.push_back(d.writes);
+      d.apply(low, true);
+      d.apply(low, true);
+      w.push_back(d.writes);
+      d.apply(low, false);  // its seconds over
+      w.push_back(d.writes);
+      d.apply(low, true);  // another press
+      w.push_back(d.writes);
+      d.apply(false, true);  // the high power mode while its seconds run
+      d.apply(false, true);
+      w.push_back(d.writes);
+      d.apply(low, false);  // back in the low power mode, at rest: B2h still holds the busy rate
+      w.push_back(d.writes);
+      d.restMode();
+      w.push_back(d.writes);
+      w.push_back(d.reg);
+      return w;
+    };
+    Panel lowDay, normalDay;
+    const std::vector<int> l = day(lowDay, true);
+    day(normalDay, false);
+    CHECK(l.size() == 9 && l[0] == 0 && l[1] == 1 && l[2] == 1 && l[3] == 2 && l[4] == 3 && l[5] == 3 && l[6] == 4 && l[7] == 4);
+    CHECK(lowDay.wrong == 0 && l[8] == dispower::kRestFrameRate);
+    CHECK(normalDay.writes == 0 && normalDay.wrong == 0);  // (display_power = normal: B2h as fullInit() sent it, always)
+    CHECK(!dispower::rateNeedsWrite(false, dispower::kFrameRate, true) && !dispower::rateNeedsWrite(false, dispower::kBusyFrameRate, false));
+    // the checks can fail: a driver that writes B2h in the high power mode too, and one that loses track of it at a switch
+    Panel inHpm, forgetful;
+    inHpm.needs = [](bool, uint8_t current, bool busy) { return current != dispower::frameRate(busy); };
+    forgetful.forgets = true;
+    day(inHpm, false);
+    day(forgetful, true);
+    CHECK(inHpm.writes > 0);
+    CHECK(forgetful.wrong > 0);
+  }
   {  // the datasheet's sequences (7.11): into LPM the voltages, 20 ms, 39h, 100 ms; out of it 38h, 300 ms, the voltages, 20 ms
     dispower::Step st[dispower::kMaxSteps];
     CHECK(dispower::switchSteps(true, st) == 2);
@@ -1495,12 +1580,12 @@ static void testFramePlanPanel() {
     CHECK(s.action == P::SLEEP && s.waitUs == 25000);
     p.setLatencyUs(dispower::latencyUs(true, 20000));
     CHECK(p.latencyUs() == 20000 + dispower::kExtraLatencyUs);
-    s = p.next(500, 940000, false);  // now 140 ms ahead: due already
+    s = p.next(500, 940000, false);  // now 265 ms ahead: due already
     CHECK(s.action == P::SEND && s.waitUs == 0);
-    s = p.next(500, 838000, false);  // (from 162 ms before the tick: 22 ms to wait)
+    s = p.next(500, 712600, false);  // (from 287 ms before the tick: 22 ms to wait)
     CHECK(s.action == P::SLEEP && s.waitUs > 21000 && s.waitUs < 23000);
   }
-  {  // ... and slow work stops 105 ms earlier before it.  (Up to 1.12, at 8 Hz, the next second was also drawn 43 ms
+  {  // ... and slow work stops 230 ms earlier before it.  (Up to 1.12, at 8 Hz, the next second was also drawn 43 ms
      // earlier, 168 ms ahead instead of 125; it is drawn a second ahead now, whatever the figure.)
     P p(dispower::latencyUs(true, 20000));
     p.drew(500, 30000, false);
@@ -1508,9 +1593,65 @@ static void testFramePlanPanel() {
     P::Step s = p.next(500, 300000, false);
     CHECK(s.action == P::PREPARE && s.sec == 501);
     p.drew(501, 30000, true);
-    CHECK(p.next(500, 550000, false).action == P::IDLE);  // sent 140 ms ahead: 310 ms away
-    s = p.next(500, 570000, false);                       // 290 ms away
-    CHECK(s.action == P::SLEEP && s.waitUs == 430000 - 15000 - p.latencyUs());
+    CHECK(p.next(500, 420000, false).action == P::IDLE);  // sent 265 ms ahead: 315 ms away
+    s = p.next(500, 450000, false);                       // 285 ms away
+    CHECK(s.action == P::SLEEP && s.waitUs == 550000 - 15000 - p.latencyUs());
+  }
+  {  // a press: the panel at 8 Hz at once and the frame that waits sent by its shorter lead, 187.5 ms later in its second
+     // (never late for it); back to 2 Hz only with the seconds after the press over, a frame prepared and the planner
+     // quiet (mayRest()), where the send by the longer lead is still ahead
+    const int32_t rest = dispower::latencyUs(true, 20000), busy = dispower::latencyUs(true, 20000, true);
+    P p(rest);
+    p.drew(500, 30000, false);
+    p.sent(15000);
+    p.drew(501, 30000, true);
+    P::Step s = p.next(500, 600000, false);
+    CHECK(s.action == P::SLEEP && s.waitUs == 400000 - 15000 - rest);  // (135 ms away)
+    p.setLatencyUs(busy);
+    s = p.next(500, 600000, false);
+    CHECK(s.action == P::IDLE && s.waitUs == 400000 - 15000 - busy && busy - rest == -187500);
+    CHECK(dispower::mayRest(true, false, p.prepared(), p.quiet(600000)));   // 322 ms before its send at 8 Hz: quiet
+    CHECK(!dispower::mayRest(true, false, p.prepared(), p.quiet(800000)));  // 122 ms before it: not quiet
+    CHECK(!dispower::mayRest(true, true, true, true) && !dispower::mayRest(false, false, true, true) &&
+          !dispower::mayRest(true, false, false, true));  // (a press still being answered; at rest already; nothing prepared)
+    P q = p;
+    q.setLatencyUs(rest);
+    s = q.next(500, 600000, false);
+    CHECK(s.action == P::SLEEP && s.waitUs > 100000);  // back at rest when quiet: its send 135 ms ahead
+    // the check can fail: back at rest at any moment, 200 ms before the tick, the send is due at once and the frame is on
+    // the glass some 65 ms late on average
+    q = p;
+    q.setLatencyUs(rest);
+    s = q.next(500, 800000, false);
+    CHECK(s.action == P::SEND && s.waitUs == 0 && -200000 + 15000 + rest > 30000);
+    // with no frame prepared (after a forced redraw) the planner can be quiet with the next draw still to come, and at
+    // 20 MHz that draw (120 ms) and the longer lead (310 ms) do not fit in the 400 ms left: no switch then
+    P f(busy);
+    f.clockChanged(80, 20);
+    f.drew(500, 120000, false);
+    f.sent(60000);
+    CHECK(f.quiet(600000) && !dispower::mayRest(true, false, f.prepared(), f.quiet(600000)));
+    f.setLatencyUs(rest);  // (switched anyway: the draw ends at 720 ms, after the send's moment at 690)
+    CHECK(f.next(500, 600000, false).action == P::PREPARE);
+    f.drew(501, 120000, true);
+    s = f.next(500, 720000, false);
+    CHECK(s.action == P::SEND && s.waitUs == 0);
+    // a press just after the coming second has gone out by the longer lead: its redraw shows that second, not the one
+    // before it, though by the shorter latency the window alone would say the one before (200 ms to the tick, the
+    // window 153)
+    P g(rest);
+    g.drew(500, 30000, false);
+    g.sent(15000);
+    g.drew(501, 30000, true);
+    CHECK(g.next(500, 740000, false).action == P::SEND);  // (265 ms ahead: due)
+    g.sent(15000);
+    g.setLatencyUs(busy);
+    s = g.next(500, 800000, true);
+    CHECK(s.action == P::DRAW_NOW && s.sec == 501 && 200000 > 2 * (30000 + 15000) + busy);
+    P h(busy);  // (and with the coming second not sent yet, the window as before)
+    h.drew(500, 30000, false);
+    h.sent(15000);
+    CHECK(h.next(500, 800000, true).sec == 500 && h.next(500, 900000, true).sec == 501);
   }
 
   // Simulated loops (LoopSim, no stalls or slow draws: those are the tests above), the panel's oscillator off by up
@@ -1543,19 +1684,28 @@ static void testFramePlanPanel() {
   };
   const Glass hpm = glass(dispower::kHpmFrameUs, dispower::latencyUs(false, 20000));
   const Glass lpm = glass(dispower::kLpmFrameUs, dispower::latencyUs(true, 20000));
-  const Glass wrong = glass(dispower::kLpmFrameUs, dispower::latencyUs(false, 20000));  // the 25.5 Hz figure on the 4 Hz panel
-  // ... and the 8 Hz figure of 1.12 on it: the 4 Hz refresh with the extra time of the 8 Hz one, (125 - 39.2) / 2 ms
-  const Glass old8 = glass(dispower::kLpmFrameUs, 20000 + (125000 - dispower::kHpmFrameUs) / 2);
-  printf("  on the glass: 25.5 Hz %+.1f ms on average (%+.0f to %+.0f), 4 Hz %+.1f ms (%+.0f to %+.0f), 4 Hz timed as 25.5 %+.1f ms"
-         " (%+.0f to %+.0f), as 8 Hz %+.1f ms (%+.0f to %+.0f), %d frames each\n",
-         hpm.mean, hpm.lo, hpm.hi, lpm.mean, lpm.lo, lpm.hi, wrong.mean, wrong.lo, wrong.hi, old8.mean, old8.lo, old8.hi,
-         lpm.n);
-  CHECK(hpm.n > 1300 && lpm.n > 1300 && hpm.everySecond && lpm.everySecond);
+  const Glass busy = glass(dispower::kLpmBusyFrameUs, dispower::latencyUs(true, 20000, true));  // after a press: 8 Hz
+  const Glass wrong = glass(dispower::kLpmFrameUs, dispower::latencyUs(false, 20000));  // the 25.5 Hz figure on the 2 Hz panel
+  // ... the 4 Hz figure there was up to this change on it, (250 - 39.2) / 2 ms, and the 8 Hz one (a panel that stayed at
+  // 2 Hz when it was asked for 8, or the other way round in the time it takes)
+  const Glass old4 = glass(dispower::kLpmFrameUs, 20000 + (250000 - dispower::kHpmFrameUs) / 2);
+  const Glass stuck = glass(dispower::kLpmFrameUs, dispower::latencyUs(true, 20000, true));
+  printf("  on the glass: 25.5 Hz %+.1f ms on average (%+.0f to %+.0f), 2 Hz %+.1f ms (%+.0f to %+.0f), 8 Hz after a press %+.1f ms"
+         " (%+.0f to %+.0f); 2 Hz timed as 25.5 %+.1f ms (%+.0f to %+.0f), as 4 Hz %+.1f ms (%+.0f to %+.0f), as 8 Hz %+.1f ms;"
+         " %d frames each\n",
+         hpm.mean, hpm.lo, hpm.hi, lpm.mean, lpm.lo, lpm.hi, busy.mean, busy.lo, busy.hi, wrong.mean, wrong.lo, wrong.hi, old4.mean,
+         old4.lo, old4.hi, stuck.mean, lpm.n);
+  CHECK(hpm.n > 1300 && lpm.n > 1300 && busy.n > 1300 && hpm.everySecond && lpm.everySecond && busy.everySecond);
   CHECK(fabs(hpm.mean) < 3.0 && hpm.lo > -33.0 && hpm.hi < 33.0);    // half of 39 ms either way, and the loop's own 12
-  CHECK(fabs(lpm.mean) < 4.0 && lpm.lo > -137.0 && lpm.hi < 137.0);  // half of 250 ms either way, and the same 12
-  CHECK(lpm.hi - lpm.lo > 220.0);                                     // (the refreshes did go round the whole second)
-  CHECK(wrong.mean > 95.0 && wrong.hi > 200.0);                       // the checks above would see the wrong figure ...
-  CHECK(!(fabs(old8.mean) < 4.0) && old8.mean > 50.0);               // ... and the 8 Hz one: about 60 ms late on average
+  // half of 500 ms either way and the same 12; the refresh goes round the second more slowly against its 500 ms, so the
+  // mean of these runs settles less: within 8 ms, the share of the refresh that 4 ms was at 4 Hz
+  CHECK(fabs(lpm.mean) < 8.0 && lpm.lo > -262.0 && lpm.hi < 262.0);
+  CHECK(lpm.hi - lpm.lo > 450.0);                                     // (the refreshes did go round the whole second)
+  CHECK(fabs(busy.mean) < 4.0 && busy.lo > -76.0 && busy.hi < 76.0);  // half of 125 ms either way, and the same 12
+  CHECK(busy.hi - busy.lo > 110.0);
+  CHECK(wrong.mean > 200.0 && wrong.hi > 450.0);                      // the checks above would see the wrong figure ...
+  CHECK(!(fabs(old4.mean) < 8.0) && old4.mean > 100.0);              // ... the 4 Hz one: about 125 ms late on average ...
+  CHECK(!(fabs(stuck.mean) < 8.0) && stuck.mean > 150.0);            // ... and the 8 Hz one: about 188 ms late
 }
 
 // ---------------------------------------------------------------------------
