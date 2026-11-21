@@ -1626,7 +1626,7 @@ void testFramePlanIdle() {
     if (misses) printf("  %d MHz: %d of %d probes miss\n", mhz, misses, probes);
     CHECK(misses == 0 && probes > 20000);
   }
-  for (bool halfway : {false, true}) {  // display_power = low: 43 ms more to the glass, from the start or from half-way
+  for (bool halfway : {false, true}) {  // display_power = low: 105 ms more to the glass, from the start or from half-way
     int probes = 0;
     const int misses = idleMisses(real, 20, 5, &probes, dispower::latencyUs(true, 20000), halfway);
     if (misses) printf("  display_power = low%s: %d of %d probes miss\n", halfway ? ", switched half-way" : "", misses, probes);
@@ -2607,7 +2607,11 @@ void testLightSleepGuard() {
     // 33 here, after a banner came down at 80 MHz; the sends after a wake-up are checked on their own, below)
     CHECK(now.late == 0 && now.worstLateUs <= 30000 && now.worstSendBehindUs <= kModelLateBeginUs + 1000);
     CHECK(now.napStats.worstLateWakeUs() > 1000 && now.napStats.worstLateWakeUs() <= modelLate);
-    CHECK(old.late == 0 && old.worstSendBehindUs == 0);  // (the old ones were on time too: they only cost more)
+    // (the old ones were on time too, they only cost more: every send after a wake-up began on its moment.  The same
+    // 1 ms as above is for the send right after a forced redraw: with the 4 Hz figure one begins 0.3 ms late in seed 32,
+    // after a redraw forced about 215 ms before a tick at 80 MHz, the edge of 2 * cost + latency; with the 8 Hz figure
+    // none did in these seeds, and every send was checked to begin on time)
+    CHECK(old.late == 0 && old.worstWakeSendLateUs == 0 && old.worstSendBehindUs <= 1000);
     CHECK(idleNow < idleOld - 5 && awakeNow < awakeOld - 5);  // (some 9 ms a second less, in this model)
     // from a wake-up to its send: the guard's share (old guard and lead against the new guard alone) and the lead's
     // (kSpinUs - kWakeLeadUs, 5 ms)
@@ -2767,7 +2771,7 @@ void testLightSleepLoop() {
     // the draw after 1.12: one held up past that waits a second)
     CHECK(on.worstBatteryGapUs <= 10000000 && on.logLines >= kSeconds / 600 - 1 && on.worstLogLateUs < 2000000);
   }
-  {  // display_power = low: every frame goes out 43 ms earlier in its second (the panel takes that much longer); no more
+  {  // display_power = low: every frame goes out 105 ms earlier in its second (the panel takes that much longer); no more
      // late frames for it, and the chip sleeps about as much
     SleepLoop hpm, lpm;
     lpm.latencyUs = dispower::latencyUs(true, 20000);

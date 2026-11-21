@@ -117,15 +117,15 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 38. **Not yet.** `display_power = low`, with the settings of 37 (or of 24 if light sleep is off). Worth a run of its
     own in the log (the sheet's seventh line).
     * The meter on USB (5 V, battery out), ten seconds after the last button press, with `display_power = low` and with
-      `normal`, nothing else changed (each is a restart): the difference is what it saves. The guess is about 1 mA;
+      `normal`, nothing else changed (each is a restart): the difference is what it saves. The guess is about 1.2 mA;
       nothing published says more, so anything from nothing to 2 mA would not be a surprise. The *Power and settings*
-      page should have a *Display* row saying `low power mode, 8 Hz refresh`.
-    * The picture at 8 refreshes a second next to 25.5: contrast and legibility in daylight and in lamp light, and
+      page should have a *Display* row saying `low power mode, 4 Hz refresh`.
+    * The picture at 4 refreshes a second next to 25.5: contrast and legibility in daylight and in lamp light, and
       from the side; no flicker or shimmer, no smearing of the seconds, no ghost of the digits before.
     * The seconds against a reference (a phone's clock with seconds, or a radio time signal): they should change within
-      about a twentieth of a second of it, sometimes a little before and sometimes a little after, drifting slowly
+      about an eighth of a second of it, sometimes a little before and sometimes a little after, drifting slowly
       between the two; never clearly late.
-    * Buttons and page changes still feel immediate (up to 125 ms instead of 39 before they show).
+    * Buttons and page changes still feel immediate (up to 250 ms instead of 39 before they show).
     * The cubes: they run in the high power mode, so they should look as smooth as with `normal`; starting one takes
       about a third of a second longer, and afterwards the *Display* row is back.
     * After a day: the *Frames* line, no more late frames than without it.

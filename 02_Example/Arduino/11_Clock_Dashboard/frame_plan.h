@@ -10,7 +10,7 @@
 // without the digits changing late, and the send and the draw are one stretch of work,
 // so with light sleep (light_sleep.h) the chip wakes once a second, for the send itself
 // (idleUs()).  The panel refreshes itself at 25.5 Hz, so a frame shows up
-// 0-39 ms after it has been sent (0-125 ms at the 8 Hz of display_power = low,
+// 0-39 ms after it has been sent (0-250 ms at the 4 Hz of display_power = low,
 // display_power.h); the send is timed to end `latencyUs` before the second starts,
 // which puts the average error at zero.
 //
@@ -57,9 +57,14 @@ class FramePlanner {
     if (prepared_ && (preparedSec_ < sec || preparedSec_ > sec + 2)) prepared_ = false;
 
     if (force) {
-      // A frame drawn and sent now is on the glass `cost` from now.  Close to a tick there would
-      // be no time left afterwards to prepare the next second the usual way, so show the second
-      // that is about to start instead (up to about 65 ms early beats a late second).
+      // A frame drawn and sent now is on the glass `cost` and `latencyUs_` from now.  Close to a tick
+      // there would be no time left afterwards to prepare the next second the usual way (a draw, and
+      // a send that ends `latencyUs_` before the tick), so show the second that is about to start
+      // instead: early beats a late second.  The window is 2 * cost + latencyUs_ before the tick,
+      // 110 ms at 80 MHz in the high power mode and about 485 ms at 20 MHz with display_power = low
+      // at 4 Hz, but the longer latency moves the scheduled sends just as far, so on average such a
+      // frame is at most `cost` early whatever the latency (45 ms at 80 MHz, 180 at 20), and the
+      // refresh's own spread comes on top (up to 20 ms either way at 25.5 Hz, 125 at 4 Hz).
       const int32_t cost = (int32_t)(drawCostUs_ + sendCostUs_);
       st.action = DRAW_NOW;
       st.sec = usToNext <= 2 * cost + latencyUs_ ? sec + 1 : sec;
@@ -99,9 +104,10 @@ class FramePlanner {
   }
 
   // May slow work (I2C sensors, battery, a line of the power log) run now?  Never close to a send.  A prepared
-  // frame is taken to go out in this second, as it does once its draw is over; at 80 MHz the draw can end just
-  // before the tick, a second and more before its send, and then slow work waits for the tick.  With no frame
-  // prepared, the tick is what counts.
+  // frame is taken to go out in this second, as it does once its draw is over; at 80 MHz (and at 20 with
+  // display_power = low, where the send begins about 185 ms before the tick) the draw can end just before the
+  // tick, a second and more before its send, and then slow work waits for the tick.  With no frame prepared, the
+  // tick is what counts.  At 20 MHz with display_power = low that leaves slow work about 515 ms of every second.
   bool quiet(int32_t usec) const {
     const int32_t left = 1000000 - usec;
     return prepared_ ? left - sendLeadUs() > kQuietUs : left > kQuietUs;

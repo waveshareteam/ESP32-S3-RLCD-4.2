@@ -1463,14 +1463,22 @@ static void testFramePlan() {
 static void testFramePlanPanel() {
   section("frame scheduling: the panel's refresh (display_power)");
   using P = FramePlanner;
-  // the register and the figures: 25.5 Hz in the high power mode as before (HFRA 0), 8 Hz in the low one (LFRA 5)
-  CHECK((dispower::kFrameRate & 0x10) == 0 && (dispower::kFrameRate & 0x07) == 5 && (dispower::kFrameRate & 0xE8) == 0);
+  // the register and the figures: 25.5 Hz in the high power mode as before (HFRA 0), 4 Hz in the low one (LFRA 4; it
+  // was 8 Hz, LFRA 5, up to 1.12)
+  CHECK((dispower::kFrameRate & 0x10) == 0 && (dispower::kFrameRate & 0x07) == 4 && (dispower::kFrameRate & 0xE8) == 0);
   // for the deep-sleep shutdown: the same high power rate, the low one at its slowest (LFRA 0 = 0.25 Hz), nothing else
   CHECK((dispower::kRestFrameRate & 0x10) == (dispower::kFrameRate & 0x10) && (dispower::kRestFrameRate & 0x07) == 0 &&
         (dispower::kRestFrameRate & 0xE8) == 0);
+  {  // the refresh the timing works with is the one the register asks for: LFRA 0 to 5 are 0.25, 0.5, 1, 2, 4 and 8 Hz
+     // (the datasheet's table, display_power.h), 6 and 7 are none of them.  One changed without the other fails here.
+    const int32_t lpmPeriodUs[8] = {4000000, 2000000, 1000000, 500000, 250000, 125000, 0, 0};
+    CHECK(lpmPeriodUs[dispower::kFrameRate & 0x07] == dispower::kLpmFrameUs);
+    CHECK((dispower::kFrameRate & 0x10) == 0 && dispower::kHpmFrameUs == 39216);  // HFRA 0 with OSCSET 0x80: 25.5 Hz
+    CHECK(lpmPeriodUs[5] != dispower::kLpmFrameUs && lpmPeriodUs[3] != dispower::kLpmFrameUs);  // (LFRA 5 or 3 would fail)
+  }
   CHECK(dispower::latencyUs(false, 20000) == 20000);
   CHECK(dispower::latencyUs(true, 20000) == 20000 + dispower::kExtraLatencyUs);
-  CHECK(dispower::kExtraLatencyUs > 42000 && dispower::kExtraLatencyUs < 43500);  // (125 - 39.2) / 2 ms
+  CHECK(dispower::kExtraLatencyUs > 104500 && dispower::kExtraLatencyUs < 106000);  // (250 - 39.2) / 2 ms
   {  // the datasheet's sequences (7.11): into LPM the voltages, 20 ms, 39h, 100 ms; out of it 38h, 300 ms, the voltages, 20 ms
     dispower::Step st[dispower::kMaxSteps];
     CHECK(dispower::switchSteps(true, st) == 2);
@@ -1487,22 +1495,22 @@ static void testFramePlanPanel() {
     CHECK(s.action == P::SLEEP && s.waitUs == 25000);
     p.setLatencyUs(dispower::latencyUs(true, 20000));
     CHECK(p.latencyUs() == 20000 + dispower::kExtraLatencyUs);
-    s = p.next(500, 940000, false);  // now 78 ms ahead: due already
+    s = p.next(500, 940000, false);  // now 140 ms ahead: due already
     CHECK(s.action == P::SEND && s.waitUs == 0);
-    s = p.next(500, 900000, false);  // (from 100 ms before the tick: 22 ms to wait)
+    s = p.next(500, 838000, false);  // (from 162 ms before the tick: 22 ms to wait)
     CHECK(s.action == P::SLEEP && s.waitUs > 21000 && s.waitUs < 23000);
   }
-  {  // ... and slow work stops 43 ms earlier before it.  (Up to 1.12 the next second was also drawn 43 ms earlier, 168 ms
-     // ahead instead of 125; it is drawn a second ahead now, whatever the figure.)
+  {  // ... and slow work stops 105 ms earlier before it.  (Up to 1.12, at 8 Hz, the next second was also drawn 43 ms
+     // earlier, 168 ms ahead instead of 125; it is drawn a second ahead now, whatever the figure.)
     P p(dispower::latencyUs(true, 20000));
     p.drew(500, 30000, false);
     p.sent(15000);
     P::Step s = p.next(500, 300000, false);
     CHECK(s.action == P::PREPARE && s.sec == 501);
     p.drew(501, 30000, true);
-    CHECK(p.next(500, 600000, false).action == P::IDLE);  // sent 78 ms ahead: 322 ms away
-    s = p.next(500, 640000, false);                       // 282 ms away
-    CHECK(s.action == P::SLEEP && s.waitUs == 360000 - 15000 - p.latencyUs());
+    CHECK(p.next(500, 550000, false).action == P::IDLE);  // sent 140 ms ahead: 310 ms away
+    s = p.next(500, 570000, false);                       // 290 ms away
+    CHECK(s.action == P::SLEEP && s.waitUs == 430000 - 15000 - p.latencyUs());
   }
 
   // Simulated loops (LoopSim, no stalls or slow draws: those are the tests above), the panel's oscillator off by up
@@ -1535,15 +1543,19 @@ static void testFramePlanPanel() {
   };
   const Glass hpm = glass(dispower::kHpmFrameUs, dispower::latencyUs(false, 20000));
   const Glass lpm = glass(dispower::kLpmFrameUs, dispower::latencyUs(true, 20000));
-  const Glass wrong = glass(dispower::kLpmFrameUs, dispower::latencyUs(false, 20000));  // the 25.5 Hz figure on the 8 Hz panel
-  printf("  on the glass: 25.5 Hz %+.1f ms on average (%+.0f to %+.0f), 8 Hz %+.1f ms (%+.0f to %+.0f), 8 Hz timed as 25.5 %+.1f ms"
-         " (%+.0f to %+.0f), %d frames each\n",
-         hpm.mean, hpm.lo, hpm.hi, lpm.mean, lpm.lo, lpm.hi, wrong.mean, wrong.lo, wrong.hi, lpm.n);
+  const Glass wrong = glass(dispower::kLpmFrameUs, dispower::latencyUs(false, 20000));  // the 25.5 Hz figure on the 4 Hz panel
+  // ... and the 8 Hz figure of 1.12 on it: the 4 Hz refresh with the extra time of the 8 Hz one, (125 - 39.2) / 2 ms
+  const Glass old8 = glass(dispower::kLpmFrameUs, 20000 + (125000 - dispower::kHpmFrameUs) / 2);
+  printf("  on the glass: 25.5 Hz %+.1f ms on average (%+.0f to %+.0f), 4 Hz %+.1f ms (%+.0f to %+.0f), 4 Hz timed as 25.5 %+.1f ms"
+         " (%+.0f to %+.0f), as 8 Hz %+.1f ms (%+.0f to %+.0f), %d frames each\n",
+         hpm.mean, hpm.lo, hpm.hi, lpm.mean, lpm.lo, lpm.hi, wrong.mean, wrong.lo, wrong.hi, old8.mean, old8.lo, old8.hi,
+         lpm.n);
   CHECK(hpm.n > 1300 && lpm.n > 1300 && hpm.everySecond && lpm.everySecond);
   CHECK(fabs(hpm.mean) < 3.0 && hpm.lo > -33.0 && hpm.hi < 33.0);    // half of 39 ms either way, and the loop's own 12
-  CHECK(fabs(lpm.mean) < 4.0 && lpm.lo > -76.0 && lpm.hi < 76.0);    // half of 125 ms either way, and the same 12
-  CHECK(lpm.hi - lpm.lo > 110.0);                                     // (the refreshes did go round the whole second)
-  CHECK(wrong.mean > 35.0 && wrong.hi > 90.0);                        // the check above would see the wrong figure
+  CHECK(fabs(lpm.mean) < 4.0 && lpm.lo > -137.0 && lpm.hi < 137.0);  // half of 250 ms either way, and the same 12
+  CHECK(lpm.hi - lpm.lo > 220.0);                                     // (the refreshes did go round the whole second)
+  CHECK(wrong.mean > 95.0 && wrong.hi > 200.0);                       // the checks above would see the wrong figure ...
+  CHECK(!(fabs(old8.mean) < 4.0) && old8.mean > 50.0);               // ... and the 8 Hz one: about 60 ms late on average
 }
 
 // ---------------------------------------------------------------------------

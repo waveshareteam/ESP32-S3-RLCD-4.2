@@ -1,6 +1,6 @@
 #pragma once
 
-// display_power = low: the ST7305 drives the panel in its low power mode (LPM), refreshing it 8 times a second, in
+// display_power = low: the ST7305 drives the panel in its low power mode (LPM), refreshing it 4 times a second, in
 // place of its high power mode (HPM) at 25.5 times a second.
 //
 // From the datasheet (Sitronix ST7305, version 0.2, 2021/04; Waveshare hosts a copy):
@@ -17,10 +17,13 @@
 //  * Sitronix's own sample init ends in LPM.  Nothing in the datasheet gives the current in either mode.
 //
 // What follows from that and is not written there: a frame is on the glass when the panel next refreshes its rows,
-// 0 to 39 ms after the transfer in HPM and 0 to 125 ms after it at 8 Hz.  The clock times its frames for the middle
-// of that (frame_plan.h), so in LPM the seconds change up to about 63 ms early or late instead of 20.  8 Hz is the
-// fastest LPM goes; 4 Hz would make that 125 ms.  Whether the picture keeps its contrast at 8 Hz, and how much
-// current it saves, has to be seen on the board.
+// 0 to 39 ms after the transfer in HPM and 0 to 250 ms after it at 4 Hz.  The clock times its frames for the middle
+// of that (frame_plan.h), so in LPM the seconds change up to about 125 ms early or late instead of 20.  Up to 1.12
+// LPM ran at 8 Hz, the fastest it goes, with the seconds within about 63 ms.  4 Hz was chosen for the current: drawn
+// as a straight line through the only two published figures (README: "The display's low power mode") the controller
+// draws about 0.08 mA for each refresh a second, so 4 Hz would be some 0.3 mA less than 8 at the rail.  None of that
+// is measured.  Whether the picture keeps its contrast at 4 Hz, and how much current it saves, has to be seen on the
+// board.
 //
 // Pure logic with no Arduino dependency: ST7305_U8g2 sends the steps, tools/tests checks them and the timing.
 
@@ -29,9 +32,9 @@
 
 namespace dispower {
 
-constexpr uint8_t kFrameRate = 0x05;      // FRCTRL (B2h): HFRA 0 = 25.5 Hz in HPM (as before), LFRA 5 = 8 Hz in LPM
+constexpr uint8_t kFrameRate = 0x04;      // FRCTRL (B2h): HFRA 0 = 25.5 Hz in HPM (as before), LFRA 4 = 4 Hz in LPM
 constexpr int32_t kHpmFrameUs = 39216;    // one refresh in HPM: 1 / 25.5 Hz
-constexpr int32_t kLpmFrameUs = 125000;   // ... in LPM: 1 / 8 Hz
+constexpr int32_t kLpmFrameUs = 250000;   // ... in LPM: 1 / 4 Hz
 
 // For a clock that has switched itself off (the battery-empty screen, then deep sleep for as long as the cell is low,
 // which can be days): LPM at its slowest, whatever display_power says.  The picture does not change again until a

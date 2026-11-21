@@ -138,7 +138,7 @@ The last column is the name the same setting has in `config.h` / `secrets.h`, se
 | `console` | `on`, `auto` or `off`: the USB serial console (the log and the commands). `auto` runs it only while a computer is on the USB port, `off` not at all; shut down, it takes the USB port with it. See [The console](#the-console). **Not yet tried on the board** (`on`) | `CONSOLE_MODE` |
 | `power_log` | `on` / `off`. On: the clock writes its power readings into its own flash, one line at each start and every ten minutes, and copies the log to an SD card that is in the slot while it starts; see [The clock's own log](#the-clocks-own-log). The first time, the FAT partition of the flash is formatted. **Not yet tried on the board** (`off`) | `POWER_LOG` (`1` / `0`) |
 | `light_sleep` | `on` / `off`. On: between the frames the processor goes into light sleep instead of idling, whenever the radio is off, the console is shut down and no button is down or still being read as a click; KEY and BOOT wake it. Its clock is less exact while it sleeps: keep `wifi_mode = sync` so the network time puts it right. See [Light sleep](#light-sleep). **Not yet tried on the board** (`off`) | `LIGHT_SLEEP` (`1` / `0`) |
-| `display_power` | `normal` / `low`. Low: the display's controller refreshes the panel 8 times a second instead of 25.5 (its low power mode), for less current. A frame then shows up 0 to 125 ms after it is sent instead of 0 to 39; the frame timing allows for that, so the seconds change up to about 63 ms early or late instead of 20. How much it saves has not been measured. See [The display's low power mode](#the-displays-low-power-mode). **Not yet tried on the board** (`normal`) | `DISPLAY_POWER` |
+| `display_power` | `normal` / `low`. Low: the display's controller refreshes the panel 4 times a second instead of 25.5 (its low power mode), for less current. A frame then shows up 0 to 250 ms after it is sent instead of 0 to 39; the frame timing allows for that, so the seconds change up to about 125 ms early or late instead of 20. How much it saves has not been measured. See [The display's low power mode](#the-displays-low-power-mode). **Not yet tried on the board** (`normal`) | `DISPLAY_POWER` |
 | `weather_interval_min` | Minutes between weather updates, 5 to 240 (`15`) | `WEATHER_INTERVAL_MIN` |
 
 (`reset_all`, described above, is not a setting but an instruction.) The accepted spellings of every value are in
@@ -386,8 +386,8 @@ All six formats fit the date line in every month (checked on the rendered pixels
 
 ### Keeping the seconds on time
 
-The panel refreshes itself 25.5 times a second, so a frame shows up 0 to 39 ms after it has been sent (8 times and 0 to
-125 ms with `display_power = low`, see [The display's low power mode](#the-displays-low-power-mode)). The clock therefore
+The panel refreshes itself 25.5 times a second, so a frame shows up 0 to 39 ms after it has been sent (4 times and 0 to
+250 ms with `display_power = low`, see [The display's low power mode](#the-displays-low-power-mode)). The clock therefore
 draws each second into the display buffer a second ahead, straight after the one before it has been sent, and sends it
 just before the second starts, timed so the average error is zero (`DISPLAY_LATENCY_MS`). A slow draw cannot make the
 digits late, only the short transfer is exposed. (Until this change the draw was left until shortly before the send,
@@ -649,7 +649,7 @@ does not drive it.
 Six settings go further than `wifi_power_save`: **`wifi_mode = sync`** keeps the radio off between syncs,
 **`spotify_live = off`** lets it sleep while music plays as well, **`cpu_idle_mhz`** slows the processor while the radio is
 off, **`console = auto`** (or `off`) shuts the USB serial console down, **`light_sleep`** puts the processor to sleep
-between the frames, and **`display_power = low`** has the display refreshed 8 times a second instead of 25.5. All six
+between the frames, and **`display_power = low`** has the display refreshed 4 times a second instead of 25.5. All six
 are **off by default**. The first four have run on the board for days since 7 October 2026, and the owner has measured
 the current with them (see [Light sleep](#light-sleep)); `light_sleep` and `display_power` (both 1.11) have not run
 on a board yet. Otherwise what follows is what the code does and what a PC simulation of its rules
@@ -876,7 +876,7 @@ up to a second late, at the next frame. **Not run on the board.**
 sleep in the simulation, and the one before a send is aimed at the send itself. How late the chip wakes on top of that
 (up to 2 ms in the simulation) is not covered: a wake-up that comes early is spun into the send, and one that comes
 late begins the send at once, so a send may begin up to 2 ms after its moment (0.13 ms on average in the simulation),
-for a frame that reaches the glass 0 to 125 ms after it is sent with `display_power = low`. A banner comes down and
+for a frame that reaches the glass 0 to 250 ms after it is sent with `display_power = low`. A banner comes down and
 slow work starts that much late too. In return the chip is awake about 1.3 ms before a send in the simulation, where
 it was about 6 with a guard of 2 ms and 0.2 % and a lead of 3 ms, and some 16 with the first ones (5 ms and 1/128 of
 the sleep, and 5 ms). A board that wakes later than the simulation sends later by as much, with nothing to spare.
@@ -943,8 +943,8 @@ and the clock against a phone in the morning), and the shutdown still waking by 
 ### The display's low power mode
 
 `display_power = low` (`#define DISPLAY_POWER "low"`) switches the display's controller, a Sitronix ST7305, from its
-high power mode to its **low power mode**: it refreshes the panel 8 times a second instead of 25.5. **It is new in 1.11,
-off by default and has not run on a board yet, and what it saves has not been measured.**
+high power mode to its **low power mode**: it refreshes the panel 4 times a second instead of 25.5 (8 up to 1.12). **It
+is new in 1.11, off by default and has not run on a board yet, and what it saves has not been measured.**
 
 **What the datasheet says** (ST7305 version 0.2, April 2021,
 [a copy at Waveshare](https://files.waveshare.com/wiki/common/ST_7305_V0_2.pdf)):
@@ -954,8 +954,8 @@ off by default and has not run on a board yet, and what it saves has not been me
   board writes, which the clock has always used. In the low power mode it does it 0.25 to 8 times a second. A reset
   leaves it in the high power mode; Sitronix's own sample start-up ends in the low one.
 * Waveshare's start-up sets the low power mode's rate to once a second, and never switches to it. The clock now sets it
-  to 8, the fastest there is (`FRCTRL`, `B2h` = `0x05` instead of `0x02`), and leaves the high power mode's rate alone:
-  with `display_power = normal` nothing should look different.
+  to 4, the second fastest there is (`FRCTRL`, `B2h` = `0x04` instead of `0x02`; up to 1.12 it was 8, `0x05`), and
+  leaves the high power mode's rate alone: with `display_power = normal` nothing should look different.
 * The panel is read from that memory a frame at a time in both modes (the datasheet times its tearing-effect signal at
   32 refreshes a second and at 1), so what the clock sends shows in the low power mode too, at the next refresh.
 * The way into the low power mode, a figure in section 7.11: the source voltages, 20 ms, the switch, 100 ms; and out of
@@ -964,29 +964,32 @@ off by default and has not run on a board yet, and what it saves has not been me
 * **It gives no current for either mode**, and says nothing about how the picture looks at the lower rates.
 
 **What follows from it** (worked out here, not written there): a frame is on the glass when the panel next refreshes
-it, 0 to 39 ms after it was sent at 25.5 Hz and 0 to 125 ms at 8 Hz. The clock sends every second early by half of
+it, 0 to 39 ms after it was sent at 25.5 Hz and 0 to 250 ms at 4 Hz. The clock sends every second early by half of
 that, so that the error is zero on average ([Keeping the seconds on time](#keeping-the-seconds-on-time)); in the low
-power mode it sends them 43 ms earlier still. The seconds then change up to about 63 ms before or after the real second
-instead of 20, and where in that span they land wanders slowly, because the controller refreshes by its own oscillator.
-In a simulation of the loop with the panel's refresh modelled (`tools/tests/test_logic.cpp`) they came out 0.1 ms late
-on average, from 64 ms early to 64 late; timed as before, at 8 Hz they would have been 43 ms late on average and up to
-108. A slower rate would save more and put the seconds a quarter of a second or more off, which is why 8 Hz is the only
-one on offer. A button press or a page change takes up to 125 ms to show instead of 39.
+power mode it sends them 105 ms earlier still. The seconds then change up to about 125 ms before or after the real
+second instead of 20, and where in that span they land wanders slowly, because the controller refreshes by its own
+oscillator. In a simulation of the loop with the panel's refresh modelled (`tools/tests/test_logic.cpp`) they came out
+1.9 ms early on average, from 126 ms early to 130 late; timed as at 25.5 Hz they would have been 103 ms late on average
+and up to 235, and timed as at 8 Hz, 60 ms late on average. Up to 1.12 the low power mode ran at 8 Hz, the fastest it
+has, for the seconds' sake: they changed within about 63 ms of the real second. It runs at 4 Hz now for the current, by
+the straight line below some 0.3 mA less than at 8 Hz (at 3.3 V), and the seconds pay for it with twice the spread. A
+slower rate still, 2 Hz, would put them up to a quarter of a second off either way. A button press or a page change
+takes up to 250 ms to show instead of 39. **Nobody has seen 4 Hz on the board**: neither the picture nor the current.
 
 **What it might save** (a guess; **none of it is measured**). A refresh drives every column of the panel once for each
 row, so that part of the controller's current goes with the refresh rate, and its voltage booster, oscillator and bias
 do not. The datasheet has no figures. The only ones published for this panel come with a community ESPHome driver for
 this board ([ESPHome-ST7305-RLCD](https://github.com/kylehase/ESPHome-ST7305-RLCD)): about 5 mA in the high power mode
 at 51 Hz and about 1 mA in the low one at 1 Hz, without a word on how they were found. Taken as they are and drawn as a
-straight line, 25.5 Hz is about 3 mA and 8 Hz about 1.5 mA: some 1.4 mA less at 3.3 V, **about 1 mA less at the USB
-connector**, of the 14 to 16 mA that [Light sleep](#light-sleep) expects (or the 21 mA measured without it). On the
-3400 mAh cell that would be about half a day more a week. It might as well be much less: what matters is how much of
+straight line, 25.5 Hz is about 3 mA, 8 Hz about 1.5 and 4 Hz about 1.2: some 1.7 mA less at 3.3 V, **about 1.2 mA
+less at the USB connector**, of the 14 to 16 mA that [Light sleep](#light-sleep) expects (or the 21 mA measured without
+it). On the 3400 mAh cell that would be a little over half a day more a week. It might as well be much less: what matters is how much of
 the board's 12 to 14 mA "rest" the display is, and nobody has measured that. A meter shows it within a minute: the
 setting takes effect at the next start (a settings file, or `set display_power = low` in the serial console, which
 restarts the clock).
 
 **How to see it working.** The *Power and settings* page has a **Display** row while `display_power = low`:
-`low power mode, 8 Hz refresh` (left out on the fullest page, with the PSRAM warning and two rows of the log). `power`
+`low power mode, 4 Hz refresh` (left out on the fullest page, with the PSRAM warning and two rows of the log). `power`
 in the serial console says which mode the panel is in and how far ahead the frames are sent.
 
 **At the shutdown**, whatever `display_power` says (since 1.12): before the deep sleep the clock puts the panel into the
@@ -996,7 +999,7 @@ there. A wake-up that starts the clock sets the usual rate again; the five-minut
 alone. How the screen looks at 0.25 Hz, and what it saves, has not been seen on the board.
 
 What has to be seen on the board ([TESTING.md](TESTING.md), item 38): the current with `low` and with `normal`, the
-picture at 8 Hz next to 25.5 (contrast, flicker, smearing, from the side as well), the seconds against a reference, and
+picture at 4 Hz next to 25.5 (contrast, flicker, smearing, from the side as well), the seconds against a reference, and
 whether presses still feel immediate.
 
 ### What is switched off
@@ -1173,9 +1176,9 @@ both. It is off by default, **new in 1.7 and not yet tried on the board**.
 | With `light_sleep` the clock is off by seconds, or the seconds jump at the hourly sync | The chip's own clock is less exact while it sleeps, see [Light sleep](#light-sleep). The *Drift* line says by how much; set `light_sleep = off` (and with WiFi off, keep it off) |
 | With `light_sleep` a button press is missed or answered late, or late frames appear | Set `light_sleep = off` and tell someone: the rules were only checked in a simulation |
 | Seconds stutter now and then | See [Keeping the seconds on time](#keeping-the-seconds-on-time): the Info page's *Frames* and *Time* lines tell the firmware, the network and the panel apart |
-| Digits change a little early or late | Change `DISPLAY_LATENCY_MS` in `config.h` (default 20, the panel adds 0 to 39 ms on top; with `display_power = low` 0 to 125, and the clock adds 43 ms to the setting) |
-| With `display_power = low` the picture is paler, flickers, or the digits smear or leave a ghost | The panel refreshed 8 times a second: the datasheet says nothing about the picture at that rate. Set `display_power = normal` and tell someone |
-| With `display_power = low` the seconds change a little before or after another clock's | Up to about 63 ms either way is expected, and it wanders slowly (the controller refreshes by its own oscillator); see [The display's low power mode](#the-displays-low-power-mode). An offset that stays the same is `DISPLAY_LATENCY_MS` |
+| Digits change a little early or late | Change `DISPLAY_LATENCY_MS` in `config.h` (default 20, the panel adds 0 to 39 ms on top; with `display_power = low` 0 to 250, and the clock adds 105 ms to the setting) |
+| With `display_power = low` the picture is paler, flickers, or the digits smear or leave a ghost | The panel refreshed 4 times a second: the datasheet says nothing about the picture at that rate. Set `display_power = normal` and tell someone |
+| With `display_power = low` the seconds change a little before or after another clock's | Up to about 125 ms either way is expected, and it wanders slowly (the controller refreshes by its own oscillator); see [The display's low power mode](#the-displays-low-power-mode). An offset that stays the same is `DISPLAY_LATENCY_MS` |
 | *App owner needs Premium* | Spotify's rule for development-mode apps; see [Spotify](#spotify) |
 | *No active Spotify device* | Start playback once on any device, then use KEY |
 | *Rate limited, retry in 4h 46m* | Spotify's quota; wait it out, don't reboot repeatedly |
@@ -1271,7 +1274,7 @@ October showed, is in [TESTING.md](TESTING.md).
   estimate from the datasheet and the owner's readings, see [Light sleep](#light-sleep);
 * the display's low power mode (`display_power = low`, new in 1.11): **all of it.** The timing of the frames for the
   slower refresh runs on a PC against a model of the panel's refresh, and in the light-sleep loop above, and the sketch
-  compiles. Never run on the board: the switch between the modes, the picture at 8 Hz, what it saves, the seconds
+  compiles. Never run on the board: the switch between the modes, the picture at 4 Hz, what it saves, the seconds
   against a reference. The register values and the switch are the datasheet's; what it saves is a guess, see
   [The display's low power mode](#the-displays-low-power-mode);
 * the radio's wait for the processor and the figures that say why sessions went wrong (new in 1.13): **all of it.**
