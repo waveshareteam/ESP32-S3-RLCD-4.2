@@ -1261,11 +1261,31 @@ void testClockPolicy() {
   CHECK(target(none, 80, 20) == 20);
   CHECK(target(radio, 80, 20) == 80 && target(usb, 80, 20) == 80 && target(poke, 80, 20) == 80);
   Needs all;
-  all.radio = all.usbHost = all.poked = true;
+  all.radio = all.usbHost = all.poked = all.sleeps = true;
   CHECK(target(all, 80, 20) == 80);
   // no idle clock, or one that is not below the working clock: always the working clock
   CHECK(target(none, 80, 0) == 80 && target(none, 80, 80) == 80 && target(none, 80, 160) == 80);
   CHECK(target(none, 240, 80) == 80 && target(none, 160, 40) == 40);
+  // a chip that sleeps between the frames (light_sleep = on, the console off): the working clock, whatever the idle
+  // clock and with no press at all; one that stays awake, the idle clock as before.  The rule before this one (the
+  // radio, a computer or a press, nothing else) had the same chip at the idle clock: the check can fail
+  Needs sleeps;
+  sleeps.sleeps = true;
+  CHECK(target(sleeps, 80, 20) == 80 && target(sleeps, 80, 40) == 80 && target(sleeps, 240, 80) == 240 && target(sleeps, 80, 0) == 80);
+  CHECK(target(none, 80, 20) == 20 && target(none, 80, 40) == 40);
+  auto before = [](const Needs &n, int workMhz, int idleMhz) {
+    if (idleMhz <= 0 || idleMhz >= workMhz) return workMhz;
+    return (n.radio || n.usbHost || n.poked) ? workMhz : idleMhz;
+  };
+  CHECK(before(sleeps, 80, 20) == 20 && before(radio, 80, 20) == target(radio, 80, 20) && before(none, 80, 20) == target(none, 80, 20));
+  // the time the clock stays fast after a press: 8 seconds for a chip that stays awake, as before; for one that sleeps
+  // a day, which target() makes "no end", and which millis() differences still compare right (up to 24.8 days)
+  CHECK(pokeMs(false) == kPokeAwakeMs && kPokeAwakeMs == 8000);
+  CHECK(pokeMs(true) == kPokeMs && kPokeMs == 86400000u && (int32_t)kPokeMs > 0);
+  {
+    const uint32_t at = 0xFFFF0000u, until = (at + pokeMs(true)) | 1u;  // (a press just before millis() wraps)
+    CHECK((int32_t)(until - (at + 1000)) > 0 && (int32_t)(until - (at + kPokeMs + 1)) <= 0);
+  }
   // up at once, down only when quiet, nothing to do when it is there already
   CHECK(mayChange(20, 80, false) && mayChange(20, 80, true));
   CHECK(!mayChange(80, 20, false) && mayChange(80, 20, true));
@@ -2331,19 +2351,23 @@ struct WindowOnly : FramePlanner {
 
 // The UI loop with light sleep, as the sketch runs it (11_Clock_Dashboard.ino, loop() and lightSleepStep()): the frame
 // planner, the slow work in its part of the second, a line of the power log every ten minutes, a banner, button
-// presses, radio sessions with the clock at 80 MHz, and the idle clock in between.  A frame costs 30 ms to draw and
-// 15 to send at 80 MHz, 80 / MHz times as much below.  A light sleep takes 5 ms of the chip awake on the way (the SDK
+// presses, radio sessions with the clock at 80 MHz, and the CPU clock by clock_policy.h: with light sleep the working
+// clock of 80 MHz throughout (Needs::sleeps), without it (or with the console on) the idle clock between the presses
+// and the radio's sessions.  A frame costs 30 ms to draw and 15 to send at 80 MHz, 80 / MHz times as much below.  A
+// light sleep takes 5 ms of the chip awake on the way (the SDK
 // calibrates the RC clock for some 4 ms, and takes that off the time asked for), and wakes up to 1 ms early or 2 ms
 // late, give or take 0.2 % of its length.  Stalls (a flash write, the radio stack: work of the other core) come at
 // random moments while the chip is awake; while it sleeps the other core sleeps too.  `Plan` is the frame planner, or
 // for the negative controls the schedule it had up to 1.12 (DrawLate, below), an earlier lead before a send (OldLead,
 // Lead3) or quiet() by the tick (QuietByTick).  With `busyLatencyUs`, display_power = low with its faster rate after a press: the planner gets that figure
-// at the press (poke() in the sketch) and its own back at a quiet moment once kPokeMs are over (serviceDisplayRate()).
+// at the press (poke() in the sketch) and its own back at a quiet moment once dispower::kBusyMs are over (serviceDisplayRate()).
 struct SleepLoop {
   bool lightSleep = true;
+  bool console = false;        // the USB console runs (no computer on the port): no light sleep, the idle clock as without it
+  bool idleBetween = false;    // the idle clock between the presses with light sleep as well, as before (to compare)
   int idleMhz = 20;
   int32_t latencyUs = 20000;   // the planner's time to the glass (display_power.h)
-  int32_t busyLatencyUs = 0;   // ... in the kPokeMs after a press (0: the same throughout)
+  int32_t busyLatencyUs = 0;   // ... in the kBusyMs after a press (0: the same throughout)
   bool restAtOnce = false;     // ... and back to latencyUs the moment they are over (to show that the checks can fail)
   double stallEverySec = 0;    // stalls of 20 to 300 ms, about this often in the time awake (0: none)
   double slowDrawShare = 0;    // this share of the scheduled draws is held up by a stall of 20 to 300 ms (0: none)
@@ -2361,8 +2385,9 @@ struct SleepLoop {
   int64_t wakeSendLateUs = 0;       // ... and how far past its moment each of those sends began, summed ...
   int64_t worstWakeSendLateUs = 0;  // ... and at worst
   int64_t worstBannerUs = 0;        // from the moment a banner should come down to the redraw, the worst ...
-  int64_t worstBannerIdleUs = -1;   // ... of those that came down more than kPokeMs after a press (the idle clock)
-  int64_t pokedUs = 0, asleepPokedUs = 0;  // the time within kPokeMs of a press (the CPU clock up), and how much of it asleep
+  int64_t worstBannerIdleUs = -1;   // ... of those that came down more than kBusyMs after a press (no button for a while)
+  int64_t pokedUs = 0, asleepPokedUs = 0;  // the time within kBusyMs of a press (the 8 seconds), and how much of it asleep
+  int64_t slowUs = 0;               // the time at the idle clock (below 80 MHz)
   int64_t worstPressUs = 0;         // from a press to the loop taking it, the worst of all
   int64_t worstPressAsleepUs = -1;  // ... of those that came while the chip slept (-1: none did)
   int64_t asleepUs = 0, workUs = 0, idleUs = 0, totalUs = 0;
@@ -2381,10 +2406,11 @@ struct SleepLoop {
     int64_t t = 1700000000LL * 1000000LL + 250000;
     const int64_t start = t, end = t + (int64_t)seconds * 1000000;
     int64_t nextStall = stallEverySec > 0 ? t + (int64_t)(stallEverySec * 1e6 * r.uni() * 2) : INT64_MAX;
-    int64_t lastBattery = 0, lastSensor = 0, nextLog = t + 10 * 1000000LL, pokeUntil = 0, bannerUntil = t + 6000000;
+    int64_t lastBattery = 0, lastSensor = 0, nextLog = t + 10 * 1000000LL, pokeUntil = 0, busyUntil = 0, bannerUntil = t + 6000000;
     int64_t nextPress = t + 40 * 1000000LL;  // (the first one soon, so that every run has some)
     int64_t wokeForSend = -1;                // when the timer ended a sleep that was for the send (-1: it did not)
     bool force = true, pressWokeIt = false;
+    const bool between = lightSleep && !console && !idleBetween;  // (sleepsBetweenFrames(); idleBetween: the rule before)
     // ESP32-S3 datasheet v2.2, table 5-9 (radio off, peripheral clocks off): idle 22.0 / 13.2 mA and one core working
     // 28.4 / 16.2 mA at 80 / 40 MHz; 20 MHz is drawn out along the same line (Espressif gives nothing below 40)
     auto mA = [](int m, bool working) {
@@ -2419,10 +2445,11 @@ struct SleepLoop {
         asleepUs += us;
         charge += (double)us * 0.24;
       }
-      if (from < pokeUntil) {
+      if (from < busyUntil) {
         pokedUs += t - from;
         if (kind == ASLEEP) asleepPokedUs += us;
       }
+      if (mhz < 80) slowUs += t - from;
     };
     auto cost = [&](double us80) { return (int64_t)(us80 * 80.0 / mhz * (0.9 + 0.2 * r.uni())); };
     auto radioOn = [&](int64_t at) { return ((at - start) / 1000000) % 900 < 6; };  // a 6 s session every 15 min
@@ -2433,7 +2460,8 @@ struct SleepLoop {
         if (pressWokeIt && after > worstPressAsleepUs) worstPressAsleepUs = after;
         pressWokeIt = false;
         presses++;
-        pokeUntil = t + clockpolicy::kPokeMs * 1000LL;
+        pokeUntil = t + clockpolicy::pokeMs(between) * 1000LL;  // (poke())
+        busyUntil = t + dispower::kBusyMs * 1000LL;
         if (busyLatencyUs && !busy) {  // (poke(): the faster rate at once, before the answer is drawn)
           busy = true;
           busySince = t;
@@ -2446,21 +2474,25 @@ struct SleepLoop {
       }
       if (bannerUntil != 0 && t >= bannerUntil) {  // the banner comes down: a redraw
         if (t - bannerUntil > worstBannerUs) worstBannerUs = t - bannerUntil;
-        if (t >= pokeUntil && t - bannerUntil > worstBannerIdleUs) worstBannerIdleUs = t - bannerUntil;
+        if (t >= busyUntil && t - bannerUntil > worstBannerIdleUs) worstBannerIdleUs = t - bannerUntil;
         bannerUntil = 0;
         force = true;
       }
-      // the CPU clock (clock_policy.h): up at once, down only between frames
-      const int want = radioOn(t) || t < pokeUntil ? 80 : idleMhz;
+      // the CPU clock (clock_policy.h, serviceClock()): up at once, down only between frames
+      clockpolicy::Needs needs;
+      needs.radio = radioOn(t);
+      needs.poked = t < pokeUntil;
+      needs.sleeps = between;
+      const int want = clockpolicy::target(needs, 80, idleMhz);
       time_t sec;
       int32_t usec;
       splitUs(t, &sec, &usec);
-      if (want != mhz && (want > mhz || p.quiet(sec, usec))) {
+      if (clockpolicy::mayChange(mhz, want, p.quiet(sec, usec))) {
         p.clockChanged((uint32_t)mhz, (uint32_t)want);
         mhz = want;
       }
-      // (serviceDisplayRate(): the rate at rest again once kPokeMs are over, at a quiet moment with a frame prepared)
-      if (busy && (restAtOnce ? t >= pokeUntil : dispower::mayRest(busy, t < pokeUntil, p.prepared(), p.quiet(sec, usec)))) {
+      // (serviceDisplayRate(): the rate at rest again once kBusyMs are over, at a quiet moment with a frame prepared)
+      if (busy && (restAtOnce ? t >= busyUntil : dispower::mayRest(busy, t < busyUntil, p.prepared(), p.quiet(sec, usec)))) {
         busy = false;
         busyUs += t - busySince;
         if (t - busySince > worstBusyUs) worstBusyUs = t - busySince;
@@ -2556,6 +2588,7 @@ struct SleepLoop {
         lightsleep::Inputs in;
         in.enabled = true;
         in.radio = radioOn(t);
+        in.console = console;
         in.button = t >= nextPress;  // a change in the record that the loop has not taken yet
         in.poked = t < pokeUntil;
         in.busy = force;
@@ -2597,7 +2630,8 @@ struct SleepLoop {
   }
 };
 
-// The rule up to 1.12, to compare with: the kPokeMs after a press (Inputs::poked) kept the chip awake as well.
+// The rule up to 1.12, to compare with: the 8 seconds after a press (Inputs::poked, with the clock's rule of then:
+// SleepLoop::idleBetween) kept the chip awake as well.
 lightsleep::Decision decidePokeAwake(const lightsleep::Inputs &in) {
   lightsleep::Decision d = lightsleep::decide(in);
   if (in.enabled && !in.radio && !in.console && in.poked) {
@@ -2637,7 +2671,9 @@ using OldLead = LeadOf<FramePlanner::kSpinUs>;  // the old lead: kSpinUs (5 ms)
 using Lead3 = LeadOf<3000>;                     // the one after it: 3 ms
 
 // The guard before each wake-up (light_sleep.h, kGuardUs and kGuardDiv) and the lead before a send
-// (FramePlanner::kWakeLeadUs), six hours at a time at 20 MHz with display_power = low, three seeds.  Without stalls:
+// (FramePlanner::kWakeLeadUs), six hours at a time with display_power = low and cpu_idle_mhz = 20 (with light sleep
+// the clock stays at 80 MHz all the same; up to this change these ran at 20 MHz between the presses, and the same
+// checks held, with more time awake), three seeds.  Without stalls:
 // no frame late, every send begun at most kModelLateBeginUs after its moment (a wake-up as late as the model has it:
 // nothing covers that part now), less time awake and idle than with the old guard and lead, and less time from a
 // wake-up to its send than with the new guard and the old lead, or than with the guard and lead in between (2 ms and
@@ -2647,7 +2683,7 @@ using Lead3 = LeadOf<3000>;                     // the one after it: 3 ms
 void testLightSleepGuard() {
   section("light sleep: the guard before each wake-up, and the lead before a send");
   const int kSeconds = 6 * 3600;
-  const int32_t lpm = dispower::latencyUs(true, 20000);  // display_power = low and 20 MHz, as the owner runs it
+  const int32_t lpm = dispower::latencyUs(true, 20000);  // display_power = low and cpu_idle_mhz = 20, as the owner runs it
   const int64_t modelLate = modelLatestWakeUs(lightsleep::kMaxSleepUs) - lightsleep::kMaxSleepUs;
   auto msPerSec = [](int64_t us, const SleepLoop &L) { return us / (L.totalUs / 1e6) / 1000.0; };
   auto wakeToSendMs = [](const SleepLoop &L) { return L.wakeToSends ? L.wakeToSendUs / 1000.0 / L.wakeToSends : -1.0; };
@@ -2740,13 +2776,19 @@ void testLightSleepGuard() {
 void testLightSleepLoop() {
   section("light sleep: a simulated UI loop");
   const int kSeconds = 3 * 3600;
+  double onChipMa = -1;  // (with the first idle clock: light sleep keeps the working clock, so the others give the same)
   for (int mhz : {20, 40, 80}) {
-    SleepLoop off, on, late;  // (late: the schedule up to 1.12, DrawLate)
+    SleepLoop off, on, late, before, console;  // (late: the schedule up to 1.12, DrawLate; before: the idle clock between
+                                               // the presses, as up to this change; console: the console on)
     off.lightSleep = false;
-    off.idleMhz = on.idleMhz = late.idleMhz = mhz;
+    before.idleBetween = true;
+    console.console = true;
+    off.idleMhz = on.idleMhz = late.idleMhz = before.idleMhz = console.idleMhz = mhz;
     off.run(kSeconds, 21);
     on.run(kSeconds, 21);
     late.run<DrawLate>(kSeconds, 21);
+    before.run(kSeconds, 21);
+    console.run(kSeconds, 21);
     const double perSec = on.sleeps / (double)kSeconds, perSecLate = late.sleeps / (double)kSeconds;
     printf("  idle clock %d MHz: asleep %.1f %% of the time, working %.1f %%, awake and idle %.1f %%; the chip %.1f mA without, %.1f mA with"
            " (datasheet model)\n",
@@ -2768,23 +2810,49 @@ void testLightSleepLoop() {
     CHECK(perSec > 0.95 && perSec < 1.05);
     CHECK(perSecLate > 1.8);  // (the old schedule: the check can fail)
     CHECK(on.chipMa < late.chipMa);
-    CHECK(on.asleepUs > (mhz == 20 ? 0.70 : 0.85) * on.totalUs);  // (the model's own figures; the board's are unknown)
+    // (the model's own figures; the board's are unknown.  At the 80 MHz of light sleep; up to this change, with the idle
+    // clock between the presses, this checked for 70 % at 20 MHz: `before`, below)
+    CHECK(on.asleepUs > 0.85 * on.totalUs);
     CHECK(on.worstBatteryGapUs < 7000000);  // every 5 s, and a second or two late at worst
     CHECK(on.logLines >= kSeconds / 600 - 1 && on.worstLogLateUs < 1000000);  // (each line within a second of being due)
     CHECK(on.presses > 10 && on.worstPressAsleepUs >= 0 && on.worstPressAsleepUs < 5000);  // KEY ends a sleep at once ...
-    CHECK(on.worstPressUs < 45000 * 1.1 * 80 / mhz + 10000);  // ... and otherwise a press waits for a frame at most
+    CHECK(on.worstPressUs < 45000 * 1.1 + 10000);  // ... and otherwise a press waits for a frame at most (at 80 MHz)
     CHECK(on.worstBannerIdleUs >= 0 && on.worstBannerIdleUs < 6000);  // a banner comes down on time (the sleep ends before)
     CHECK(on.chipMa < off.chipMa * 0.5);
-    // the kPokeMs after a press keep the CPU clock up and the chip no longer awake: asleep for most of them, where it
+    // the CPU clock with light sleep (clockpolicy::Needs::sleeps): 80 MHz all the time, never the idle clock, so the run
+    // is the same whatever cpu_idle_mhz says.  Against the idle clock between the presses, as up to this change: more
+    // of the time asleep, less charge by this model's figures, no frame late, presses taken no later and banners down
+    // within a few milliseconds of as soon.  With the console on, or light sleep off, the chip stays awake and the idle
+    // clock is used as before (the check can fail: with light sleep it is never used)
+    printf("    the idle clock between the presses, as up to this change: asleep %.1f %%, the chip %.2f mA, frames late %d, presses taken"
+           " %.1f ms after at worst, banners down %.1f ms late at worst; below 80 MHz %.1f %% of the time (%.1f %% now, %.1f %% without"
+           " light sleep, %.1f %% with the console on)\n",
+           100.0 * before.asleepUs / before.totalUs, before.chipMa, before.late, before.worstPressUs / 1000.0, before.worstBannerUs / 1000.0,
+           100.0 * before.slowUs / before.totalUs, 100.0 * on.slowUs / on.totalUs, 100.0 * off.slowUs / off.totalUs,
+           100.0 * console.slowUs / console.totalUs);
+    if (onChipMa < 0) onChipMa = on.chipMa;
+    CHECK(on.slowUs == 0 && on.chipMa == onChipMa);
+    CHECK(before.late == 0 && before.asleepUs > (mhz == 20 ? 0.70 : 0.85) * before.totalUs);  // (what this checked for `on`)
+    CHECK(before.worstPressUs < 45000 * 1.1 * 80 / mhz + 10000);
+    CHECK(on.worstPressUs <= before.worstPressUs && on.worstBannerUs <= before.worstBannerUs + 5000);
+    CHECK(console.sleeps == 0 && console.asleepUs == 0);
+    if (mhz < 80) {
+      CHECK(on.asleepUs > before.asleepUs + 0.03 * on.totalUs && on.chipMa < before.chipMa);  // (94 % against 81 and 90 here)
+      CHECK(before.slowUs > 0.9 * before.totalUs && off.slowUs > 0.9 * off.totalUs && console.slowUs > 0.9 * console.totalUs);
+    } else {  // (an idle clock that is the working clock: nothing changes)
+      CHECK(before.chipMa == on.chipMa && before.asleepUs == on.asleepUs && before.slowUs == 0 && console.slowUs == 0);
+    }
+    // the 8 seconds after a press (dispower::kBusyMs) keep the chip no longer awake: asleep for most of them, where it
     // was never asleep with the rule up to 1.12; frames, presses and banners on time as above (a banner within a frame
     // at 80 MHz, as a press)
     SleepLoop pokeAwake;
     pokeAwake.idleMhz = mhz;
+    pokeAwake.idleBetween = true;  // (the clock as it was then: 8 seconds fast after a press, the idle clock otherwise)
     pokeAwake.decide = decidePokeAwake;
     pokeAwake.run(kSeconds, 21);
     printf("    the %u s after a press: asleep %.1f %% of them (%.1f %% with the rule up to 1.12); banners down %.1f ms late at worst"
            " (%.1f); the chip %.2f mA (%.2f)\n",
-           (unsigned)(clockpolicy::kPokeMs / 1000), 100.0 * on.asleepPokedUs / on.pokedUs, 100.0 * pokeAwake.asleepPokedUs / pokeAwake.pokedUs,
+           (unsigned)(dispower::kBusyMs / 1000), 100.0 * on.asleepPokedUs / on.pokedUs, 100.0 * pokeAwake.asleepPokedUs / pokeAwake.pokedUs,
            on.worstBannerUs / 1000.0, pokeAwake.worstBannerUs / 1000.0, on.chipMa, pokeAwake.chipMa);
     CHECK(on.pokedUs > (int64_t)on.presses * 7000000 && on.asleepPokedUs > 0.6 * on.pokedUs);
     CHECK(pokeAwake.presses > 10 && pokeAwake.pokedUs > 0 && pokeAwake.asleepPokedUs == 0);  // (the check can fail)
@@ -2875,11 +2943,13 @@ void testLightSleepLoop() {
     CHECK(now.closestWorkToSendUs > FramePlanner::kQuietUs && now.closestWorkToSendUs < 1000000);
     CHECK(perSecByTick > 1.1 && byTick.late == 0 && now.chipMa < byTick.chipMa);  // (the check can fail)
   }
-  {  // ... with its 8 Hz for the kPokeMs after a press, a press a minute: the faster figure at the press, the one at rest
+  {  // ... with its 8 Hz for the kBusyMs after a press, a press a minute: the faster figure at the press, the one at rest
      // again at a quiet moment with a frame prepared (dispower::mayRest()) after they are over.  No frame late, every
-     // second on the glass once, in order.  The faster rate lasts kPokeMs and the wait for the next quiet moment awake, as
-     // the CPU clock's 80 MHz does by the same rule: with light sleep the chip wakes for the sends, and the moment comes
-     // straight after the draw that follows, so at most about a second more (8.5 s a press on average here, 9.0 at most;
+     // second on the glass once, in order.  The faster rate lasts kBusyMs and the wait for the next quiet moment awake, by
+     // the rule the CPU clock comes down by when the chip stays awake (with light sleep the clock stays at 80 MHz, and
+     // the rate has a time of its own, which has not changed: 8 s): with light sleep the chip wakes for the sends, and
+     // the moment comes straight after the draw that follows, so at most about a second more (8.5 s a press on average
+     // here, 9.0 at most;
      // the bench charges none of it).  With quiet() by the tick (QuietByTick) a draw over before the tick was not quiet,
      // and the moment came with a wake for the battery, read every 5 s: some 6 s more (10.7 and 14.0), which is what
      // this checked for until the change.  The checks can fail: back at rest the moment they are over, frames are late;
@@ -2902,16 +2972,17 @@ void testLightSleepLoop() {
            " going back; asleep %.1f %%\n",
            rate.presses, rate.rateUps, rate.rateDowns, busyPerPressS, rate.worstBusyUs / 1e6, byTickPerPressS, byTick.worstBusyUs / 1e6,
            rate.late, rate.frames, rate.worstLateUs / 1000.0, rate.skipped, rate.twice, 100.0 * rate.asleepUs / rate.totalUs);
-    printf("    back at rest the moment kPokeMs are over: frames late %d, worst %.1f ms; the redraw by its window alone: %d twice or"
+    printf("    back at rest the moment kBusyMs are over: frames late %d, worst %.1f ms; the redraw by its window alone: %d twice or"
            " going back\n",
            atOnce.late, atOnce.worstLateUs / 1000.0, back.twice);
     CHECK(rate.presses > kSeconds / kPressSec / 2 && rate.rateUps == rate.presses && rate.rateDowns >= rate.rateUps - 1);
     CHECK(rate.frames > kSeconds * 9 / 10 && rate.late == 0 && rate.worstLateUs <= 30000);
     CHECK(rate.skipped == 0 && rate.twice == 0);
-    CHECK(busyPerPressS > clockpolicy::kPokeMs / 1000.0 && rate.worstBusyUs < (clockpolicy::kPokeMs + 1500) * 1000LL);
+    CHECK(dispower::kBusyMs == clockpolicy::kPokeAwakeMs);  // (as long as the clock's for a chip that stays awake, as before)
+    CHECK(busyPerPressS > dispower::kBusyMs / 1000.0 && rate.worstBusyUs < (dispower::kBusyMs + 1500) * 1000LL);
     CHECK(rate.asleepUs > 0.70 * rate.totalUs);
     CHECK(atOnce.late > 10 && back.twice > 10);  // (the checks can fail)
-    CHECK(byTickPerPressS > busyPerPressS + 1.5 && byTick.worstBusyUs > (clockpolicy::kPokeMs + 3000) * 1000LL && byTick.late == 0);
+    CHECK(byTickPerPressS > busyPerPressS + 1.5 && byTick.worstBusyUs > (dispower::kBusyMs + 3000) * 1000LL && byTick.late == 0);
   }
 }
 
@@ -2933,18 +3004,23 @@ void testClockAnswer() {
   CHECK(!radioMayStart(true, 20, 20, 20));
   // what target() gives with the radio asking is always an answer (when the core takes it), whatever the settings
   for (int work : {80, 160, 240})
-    for (int idle : {0, 20, 40, 80, 160}) {
-      Needs n;
-      n.radio = true;
-      for (int poked = 0; poked < 2; poked++) {
-        n.poked = poked != 0;
-        const int want = target(n, work, idle);
-        CHECK(want == work && radioMayStart(true, want, want, 0));
-        Needs off = n;
-        off.radio = false;
-        CHECK(!radioMayStart(false, target(off, work, idle), target(off, work, idle), 0));
+    for (int idle : {0, 20, 40, 80, 160})
+      for (int sleeps = 0; sleeps < 2; sleeps++) {
+        Needs n;
+        n.radio = true;
+        n.sleeps = sleeps != 0;
+        for (int poked = 0; poked < 2; poked++) {
+          n.poked = poked != 0;
+          const int want = target(n, work, idle);
+          CHECK(want == work && radioMayStart(true, want, want, 0));
+          Needs off = n;
+          off.radio = false;
+          CHECK(!radioMayStart(false, target(off, work, idle), target(off, work, idle), 0));
+          // with light sleep the clock is at the working clock before the radio asks, so the pass that sees the
+          // request answers it: nothing is raised first
+          if (sleeps) CHECK(target(off, work, idle) == work && radioMayStart(true, target(off, work, idle), want, 0));
+        }
       }
-    }
 }
 
 void testClockWait() {
@@ -3132,6 +3208,10 @@ struct Tandem {
   bool oldRule = false;
   int workMhz = 80, idleMhz = 20;
   bool lightSleep = false;
+  // the UI loop as up to 1.13: the idle clock between the frames with light sleep too, and the chip kept awake for the
+  // 8 s after a press.  Now (false) light sleep keeps the working clock (clockpolicy::Needs::sleeps, the console taken
+  // as shut down) and a press keeps nothing awake.
+  bool rules113 = false;
   int64_t sessionUs = 5000000;
   // the chip, and what the tasks share
   int64_t now = 0;
@@ -3163,7 +3243,7 @@ struct Tandem {
   int looks = 0;
   radioplan::ClockWait wait;
   // what was seen
-  int asks = 0, starts = 0, startsLow = 0, putOff = 0, changesWhileOn = 0, stalls = 0;
+  int asks = 0, starts = 0, startsLow = 0, putOff = 0, changesWhileOn = 0, stalls = 0, downs = 0;
   int64_t lowOnUs = 0, asleepOnUs = 0;
 
   explicit Tandem(bool old, uint64_t seed = 1) : oldRule(old), rng(seed) {}
@@ -3196,12 +3276,15 @@ struct Tandem {
   void uiStep() {
     switch (ui) {
       case UI_PASS: {  // serviceClock(): the request's number first, then the request, then the clock
-        if (randomAsks && rng.uni() < pokeChance) pokeUntil = now + (int64_t)clockpolicy::kPokeMs * 1000;
+        if (randomAsks && rng.uni() < pokeChance) {
+          pokeUntil = now + (int64_t)(rules113 ? clockpolicy::kPokeAwakeMs : clockpolicy::pokeMs(lightSleep)) * 1000;
+        }
         askSeen = asked;
         radioSeen = needsFast;
         clockpolicy::Needs n;
         n.radio = radioSeen;
         n.poked = now < pokeUntil;
+        n.sleeps = lightSleep && !rules113;
         target = clockpolicy::target(n, workMhz, idleMhz);
         if (clockpolicy::mayChange(mhz, target, true)) {
           pending = target;
@@ -3218,6 +3301,7 @@ struct Tandem {
       }
       case UI_SWITCH:
         if (net == NET_ON) changesWhileOn++;
+        if (pending < mhz) downs++;
         mhz = pending;
         finishPass();
         return;
@@ -3252,8 +3336,8 @@ struct Tandem {
       }
       return;
     }
-    // lightSleepStep(): the request is read again; with it, or a button a moment ago, no sleep
-    if (lightSleep && !needsFast && now >= pokeUntil && rng.uni() < 0.5) {
+    // lightSleepStep(): the request is read again; with it no sleep (nor, up to 1.13, with a button a moment ago)
+    if (lightSleep && !needsFast && (!rules113 || now >= pokeUntil) && rng.uni() < 0.5) {
       ui = UI_ENTER;
       uiAt = now + kEntryUs;
       if (askInEntry) {
@@ -3432,6 +3516,26 @@ void testRadioClockTasks() {
         CHECK(t.violations() == 0 && t.putOff == 0);
         CHECK(t.wait.longestMs() < radioplan::kClockWaitMs);
         CHECK(t.asks == t.starts || t.asks == t.starts + 1);  // (the last may still be waiting)
+        if (sleep && idle > 0) {
+          // with light sleep the clock stays at the working clock (Needs::sleeps), so no start finds it low and the loop
+          // answers at its next pass: the radio waits only for a pass, or for a nap that had begun to end.  The same day
+          // with the loop's rules of 1.13 (the idle clock between the frames) is the control.
+          Tandem c(false, 77 + (uint64_t)idle * 3 + (uint64_t)sleep);
+          c.rules113 = true;
+          c.idleMhz = idle;
+          c.lightSleep = true;
+          c.randomAsks = true;
+          c.stallChance = 0.0005;
+          c.pokeChance = 0.0003;
+          c.mhz = idle;
+          c.askAt = 3000000;
+          c.run(6LL * 3600 * 1000000);
+          printf("  (6 h, idle %d MHz, light sleep on: %u of %d starts waited for the clock, %d clock changes down; with the loop of 1.13 "
+                 "%u of %d and %d)\n",
+                 idle, (unsigned)t.wait.waits(), t.starts, t.downs, (unsigned)c.wait.waits(), c.starts, c.downs);
+          CHECK(t.wait.waits() == 0 && t.downs == 0);
+          CHECK(c.wait.waits() > 100 && c.downs > 100 && c.violations() == 0);
+        }
       }
   printf("  (the old rule on the same days: %d starts below 80 MHz, under a clock change, or with the clock low or asleep)\n", oldViolations);
   CHECK(oldViolations > 0);

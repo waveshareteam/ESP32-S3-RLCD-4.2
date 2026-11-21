@@ -89,12 +89,17 @@ static bool s_flipPolarity = false;  // user toggled the screen polarity (XOR wi
 static FramePlanner s_planner(DISPLAY_LATENCY_MS * 1000);
 static uint32_t s_lastFrameMs = 0;
 
-// The CPU clock (clock_policy.h): fast while the radio, a computer on the USB port or a button needs it
+// The CPU clock (clock_policy.h): fast while the radio, a computer on the USB port or a button needs it, and all the
+// time while the chip sleeps between the frames
 static uint32_t s_pokeUntilMs = 0;        // a button was pressed: stay fast until then (0 = no)
+static uint32_t s_busyUntilMs = 0;        // ... and the panel at its faster rate (display_power = low) until then
 static uint32_t s_clockSwitches = 0;      // how often the clock was changed (shown by the "power" console command)
 static const char *s_clockReason = "";    // why the clock is where it is, for the Power page
 static int s_clockRefusedMhz = 0;         // a clock the core would not set: not asked for again
 static bool usbHostAttached();            // (defined with the clock code further down)
+// The chip sleeps between the frames (clockpolicy::Needs::sleeps): light_sleep = on, and the console, which keeps it
+// awake for as long as it runs, is shut down (it never comes back before a restart).
+static bool sleepsBetweenFrames() { return g_cfg.lightSleep && !g_consoleOn; }
 
 // Light sleep between the frames (light_sleep = on, light_sleep.h)
 static lightsleep::Stats s_sleepStats;               // how much of the time the chip slept
@@ -237,16 +242,18 @@ static void handleBoot(ClickEvent e) {
 static void applyDisplayPower() {
   if (!s_lcd) return;
   const bool low = g_cfg.displayPower == DISPPOWER_LOW && !s_cubeOn;
-  const bool busy = low && s_pokeUntilMs != 0;
+  const bool busy = low && s_busyUntilMs != 0;
   s_lcd->setLowPower(low);
   s_lcd->setLowRate(busy);
   s_planner.setLatencyUs(dispower::latencyUs(low, DISPLAY_LATENCY_MS * 1000, busy));
 }
 
-// A button is down, or was a moment ago: the answer is drawn at the working clock (cpu_idle_mhz) for kPokeMs, and with
-// display_power = low the panel refreshes 8 times a second meanwhile, so that it is on the glass soon.
+// A button is down, or was a moment ago: the CPU clock is at the working clock (cpu_mhz) for clockpolicy::pokeMs()
+// (with light sleep it is there all the time anyway), and with display_power = low the panel refreshes 8 times a second
+// for dispower::kBusyMs, so that the answer is on the glass soon.
 static void poke(uint32_t nowMs) {
-  s_pokeUntilMs = (nowMs + clockpolicy::kPokeMs) | 1u;
+  s_pokeUntilMs = (nowMs + clockpolicy::pokeMs(sleepsBetweenFrames())) | 1u;
+  s_busyUntilMs = (nowMs + dispower::kBusyMs) | 1u;
   if (s_lcd && s_lcd->lowPower() && !s_lcd->lowRateBusy()) applyDisplayPower();
 }
 
@@ -254,10 +261,11 @@ static void poke(uint32_t nowMs) {
 // (dispower::mayRest()), so the frame that waits goes out by the longer lead in time: with light sleep, straight after
 // the draw in the first wake after them.  Called every time round the loop.
 // (With a sweeping second hand nothing is prepared or timed: any moment will do.)
-static void serviceDisplayRate(const struct timeval &tv) {
+static void serviceDisplayRate(uint32_t nowMs, const struct timeval &tv) {
+  if (s_busyUntilMs != 0 && (int32_t)(s_busyUntilMs - nowMs) <= 0) s_busyUntilMs = 0;  // over (as s_pokeUntilMs)
   const bool prepared = s_planner.prepared() || CLOCK_SWEEP_FPS > 0;
   const bool quiet = s_planner.quiet(tv.tv_sec, (int32_t)tv.tv_usec);
-  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_pokeUntilMs != 0, prepared, quiet)) {
+  if (s_lcd && dispower::mayRest(s_lcd->lowRateBusy(), s_busyUntilMs != 0, prepared, quiet)) {
     applyDisplayPower();
   }
 }
@@ -1429,7 +1437,8 @@ static void serviceConsole(uint32_t nowMs) {
 // sleep is thought of.  It is also the loop's answer to the radio, which waits for it before it comes on (net_task.cpp,
 // startRadio()): the request's number is read first, so a request that comes in while the clock is being set is not
 // answered with the clock set without it; it is answered next time round.  Once answered, the radio keeps the clock
-// up (target()) and the chip awake (lightsleep::decide()) until it is off again.
+// up (target()) and the chip awake (lightsleep::decide()) until it is off again.  With light sleep (Needs::sleeps), or
+// with no idle clock, the clock is at the working clock already, and the pass that sees a request answers it.
 static void serviceClock(uint32_t nowMs, const struct timeval &tv) {
   if (s_pokeUntilMs != 0 && (int32_t)(s_pokeUntilMs - nowMs) <= 0) s_pokeUntilMs = 0;  // over (a time long past must not come round again)
   const uint32_t ask = netRadioClockAsk();
@@ -1447,8 +1456,13 @@ static void serviceClock(uint32_t nowMs, const struct timeval &tv) {
     needs.radio = radio;
     needs.usbHost = s_usb;
     needs.poked = s_pokeUntilMs != 0;
+    needs.sleeps = sleepsBetweenFrames();  // (the idle clock only for a chip that stays awake: light_sleep = off, or the console on)
     want = clockpolicy::target(needs, g_cfg.cpuMhz(), idle);
-    s_clockReason = want == idle ? "idle" : (needs.radio ? "radio on" : (needs.usbHost ? "USB attached" : "button"));
+    s_clockReason = want == idle        ? "idle"
+                    : needs.radio       ? "radio on"
+                    : needs.usbHost     ? "USB attached"
+                    : needs.sleeps      ? "light sleep"
+                                        : "button";
     const bool quiet = s_planner.quiet(tv.tv_sec, (int32_t)tv.tv_usec);
     if (clockpolicy::mayChange((int)getCpuFrequencyMhz(), want, quiet)) applyClock(want);
   }
@@ -1666,7 +1680,7 @@ void loop() {
   watchClock(tv);
   spotifySetPageShown(s_page == PAGE_NOW_PLAYING);  // wifi_mode = sync: the Now Playing page keeps the radio on
   serviceClock(nowMs, tv);
-  serviceDisplayRate(tv);
+  serviceDisplayRate(nowMs, tv);
   if (s_cubeOn) {  // (see cubeFrame)
     cubeFrame(nowMs);
     return;

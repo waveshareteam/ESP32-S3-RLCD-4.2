@@ -13,15 +13,19 @@
 // and wake of its own.  The Arduino core has no automatic light sleep (CONFIG_PM_ENABLE is not set), so the loop
 // asks for each one itself.
 //
+// The CPU clock: a chip that sleeps between the frames works at the working clock (cpu_mhz) all the time, whatever
+// cpu_idle_mhz says (clock_policy.h, Needs::sleeps).  The idle clock saves only while the chip idles awake; here the
+// idle time is spent asleep, and at 80 MHz the work of a second is over in a quarter of the time it takes at 20, so
+// the chip sleeps sooner.  cpu_idle_mhz is for a chip that stays awake: light_sleep = off, or the console on.
+//
 // What keeps it awake (decide()):
 //   * the radio, on or about to be: WiFi cannot sleep like this (wifi_mode = always never sleeps);
 //   * the USB console: in light sleep the chip lets go of its USB port, so a computer on it would lose the clock
 //     every second, and one plugged in later would not find it (console = auto or off shut the console down);
 //   * a button that is down, a gesture that is still being timed (the debounce, the gap after a click before it is
 //     reported: ClickDetector::pending()), or a change of one that the interrupts recorded and the loop has not taken
-//     yet.  Once the gesture has been reported and its answer drawn, it sleeps again between the frames: the 8 seconds
-//     after a press (clockpolicy::kPokeMs) keep only the CPU clock up, so that the frames after a press are drawn
-//     as fast as before (up to 1.12 they kept the chip awake as well);
+//     yet.  Once the gesture has been reported and its answer drawn, it sleeps again between the frames: the seconds
+//     after a press keep nothing awake (up to 1.12 the 8 seconds after it kept the chip awake, at the working clock);
 //   * anything else that keeps the loop busy: a redraw that is due, the cube, a restart, a press that the network
 //     task has not acted on yet (Handoff, below);
 //   * slow work that is due (the sensors, the battery, a line of the power log) and can run now; when it has to
@@ -94,8 +98,8 @@ struct Inputs {
   bool console = false;        // the USB console runs (g_consoleOn)
   bool button = false;         // KEY or BOOT is down (the pins, the click detectors), a gesture is still being timed
                                // (ClickDetector::pending()), or a change of one waits in the record
-  bool poked = false;          // a button was pressed in the last kPokeMs: keeps nothing awake (only the CPU clock
-                               // follows it, clock_policy.h)
+  bool poked = false;          // a button was pressed in the CPU clock's time after it (clockpolicy::pokeMs()): keeps
+                               // nothing awake (only the CPU clock follows it, clock_policy.h)
   bool busy = false;           // a redraw is due, the cube is up, a restart is asked for, a press waits for the network
                                // task (Handoff)
   bool backOff = false;        // the SDK refused a sleep less than kRetryMs ago

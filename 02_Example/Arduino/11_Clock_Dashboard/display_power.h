@@ -23,9 +23,10 @@
 // LPM ran at 8 Hz, the fastest it goes, with the seconds within about 63 ms, and then at 4 Hz, within about 125 ms.
 // 2 Hz is chosen for the current: drawn as a straight line through the only two published figures (README: "The
 // display's low power mode") the controller draws about 0.08 mA for each refresh a second, so 2 Hz would be some
-// 0.16 mA less than 4 at the rail.  So that a press is still answered quickly, for kPokeMs after a button (the
-// seconds the CPU clock stays fast, clock_policy.h) the rate is 8 Hz and the frames are timed for it; it goes back
-// to 2 Hz at a quiet moment of the frame planner once that time is over (mayRest()), as the CPU clock goes down.
+// 0.16 mA less than 4 at the rail.  So that a press is still answered quickly, for kBusyMs after a button the rate is
+// 8 Hz and the frames are timed for it; it goes back to 2 Hz at a quiet moment of the frame planner once that time is
+// over (mayRest()), as the CPU clock goes down when the chip stays awake.  (With light sleep the CPU clock stays fast
+// for good, clock_policy.h, and the 8 Hz still lasts only these seconds: the two have their own times.)
 // None of it is measured.  Whether the picture keeps its contrast at 2 Hz, whether a change of the rate shows at the
 // next refresh and leaves no mark, and how much current it saves, has to be seen on the board.
 //
@@ -41,6 +42,7 @@ constexpr uint8_t kBusyFrameRate = 0x05;  // ... the same HFRA, LFRA 5 = 8 Hz: t
 constexpr int32_t kHpmFrameUs = 39216;    // one refresh in HPM: 1 / 25.5 Hz
 constexpr int32_t kLpmFrameUs = 500000;   // ... in LPM: 1 / 2 Hz
 constexpr int32_t kLpmBusyFrameUs = 125000;  // ... in LPM after a press: 1 / 8 Hz
+constexpr uint32_t kBusyMs = 8000;  // after a button press the faster rate lasts this long (and then to a quiet moment)
 
 // For a clock that has switched itself off (the battery-empty screen, then deep sleep for as long as the cell is low,
 // which can be days): LPM at its slowest, whatever display_power says.  The picture does not change again until a
@@ -67,12 +69,12 @@ inline int32_t latencyUs(bool low, int32_t hpmUs) { return latencyUs(low, hpmUs,
 // leave B2h as it is (setRestMode() relies on that too), so what was written last is what the panel has.
 inline bool rateNeedsWrite(bool inLpm, uint8_t current, bool busy) { return inLpm && current != frameRate(busy); }
 
-// Back to the rate at rest: once the seconds after a press are over (`poked` false), with a frame prepared and the
-// planner quiet (FramePlanner::prepared(), quiet()): the rule the CPU clock goes down by, and a prepared frame.  That
-// frame is then sent by the longer lead and has the time for it: quiet() leaves more than 300 ms before its send at
-// the busy rate, counted to the send itself, and the rate at rest takes 188 ms of it.  With light sleep that moment
-// is the first wake after the seconds of the press, straight after its draw.  With no frame prepared the draw that
-// comes next might not be over in time at 20 MHz.
+// Back to the rate at rest: once the kBusyMs after a press are over (`poked` false), with a frame prepared and the
+// planner quiet (FramePlanner::prepared(), quiet()): the rule the CPU clock goes down by (clockpolicy::mayChange()),
+// and a prepared frame.  That frame is then sent by the longer lead and has the time for it: quiet() leaves more than
+// 300 ms before its send at the busy rate, counted to the send itself, and the rate at rest takes 188 ms of it.  With
+// light sleep that moment is the first wake after the seconds of the press, straight after its draw.  With no frame
+// prepared the draw that comes next might not be over in time at the 20 MHz idle clock (without light sleep).
 inline bool mayRest(bool busyNow, bool poked, bool prepared, bool quiet) { return busyNow && !poked && prepared && quiet; }
 
 // One step of a switch between the modes: a command without parameters, or the source voltages (VOLTAGES, which
