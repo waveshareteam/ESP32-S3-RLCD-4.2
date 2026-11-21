@@ -31,3 +31,10 @@ void netNudge();
 
 // True while the radio is on or about to be: the CPU clock must not go below 80 MHz then (clock_policy.h).
 bool netRadioNeedsFastClock();
+
+// The radio waits for the UI loop's answer before it comes on (clock_policy.h, radioMayStart()).  The loop, every
+// time round: netRadioClockAsk() first, then netRadioNeedsFastClock() and the clock set for it, then, when the clock
+// is there, netRadioClockAnswer() with the number it read.  From then on, until netRadioNeedsFastClock() goes false,
+// the loop must neither lower the clock nor sleep.
+uint32_t netRadioClockAsk();
+void netRadioClockAnswer(uint32_t ask);

@@ -10,6 +10,7 @@
 #include "../../ui.cpp"
 
 #include "../../calc.h"
+#include "../../radio_plan.h"
 #include "../../sd_layout.h"
 #include "../../settings.h"
 
@@ -1144,6 +1145,66 @@ static int checkButtonHelp() {
 }
 
 // ---------------------------------------------------------------------------
+// The second Radio row of the Power and settings page (1.13): why sessions went wrong, in a text that has to fit its
+// row whatever the figures (radioplan::troubleRow()).  The row is made as the sketch makes it (a label of nine and 42
+// characters of the value, the rest cut off) and drawn on the page; where its ink ends is measured, and has to be where
+// the same text drawn whole by itself ends, short of the page's edge.
+// ---------------------------------------------------------------------------
+static int checkRadioRows() {
+  int bad = 0;
+  const int kLine = 2, kBase = 54 + 17 * kLine;  // (drawInfoPage: the first baseline at 54, the lines 17 px apart)
+  auto rightEnd = [&](const char *value, bool asRow) {
+    UiModel m = baseModel();
+    m.page = PAGE_POWER;
+    m.infoCount = asRow ? kLine + 1 : kLine;
+    setStr(m.info[0], UI_INFO_LINE_LEN, "Power     80 MHz (radio on), WiFi saver max");
+    setStr(m.info[1], UI_INFO_LINE_LEN, "Radio     on 0.8 %, 96 sessions, next in 9 min");
+    if (asRow) snprintf(m.info[kLine], UI_INFO_LINE_LEN, "%-9.9s %.*s", "", UI_INFO_LINE_LEN - 12, value);  // (the sketch's add())
+    renderModel(m);
+    if (!asRow) {  // the whole text, where the row's would be
+      u8g2_SetFont(g_u, F_MONO);
+      ink(g_u);
+      txt(g_u, 8, kBase, (std::string(10, ' ') + value).c_str());
+    }
+    for (int x = UI_WIDTH - 1; x >= 0; x--)
+      if (anyInk(x, x + 1, kBase - 10, kBase + 2)) return x;
+    return -1;
+  };
+  int rows = 0, cut = 0, widest = -1;
+  char widestText[radioplan::kTroubleRow] = "";
+  const uint32_t counts[] = {0, 7, 99, 9999, 10000, 4294967295u};
+  for (uint32_t f : counts)
+    for (uint32_t a : counts)
+      for (uint32_t p : counts)
+        for (unsigned reason : {0u, 15u, 201u, 255u}) {
+          char row[radioplan::kTroubleRow];
+          if (!radioplan::troubleRow(f, a, p, (uint8_t)reason, row)) continue;
+          rows++;
+          const int r = rightEnd(row, true), whole = rightEnd(row, false);
+          if (r > widest) {
+            widest = r;
+            setStr(widestText, sizeof widestText, row);
+          }
+          if (r != whole || r < 0 || r > UI_WIDTH - 4) {
+            if (cut++ < 3) printf("  RADIO ROW: \"%s\" ends at x=%d, drawn whole it ends at x=%d\n", row, r, whole);
+          }
+        }
+  printf("radio rows: %d texts, the widest (\"%s\") ends at x=%d of %d, %d cut or off the page\n", rows, widestText, widest, UI_WIDTH, cut);
+  bad += cut;
+  {  // negative control: a value one character too long is cut by the row, and the same measurement sees it
+    const std::string longer(radioplan::kTroubleRow, '9');
+    const int r = rightEnd(longer.c_str(), true), whole = rightEnd(longer.c_str(), false);
+    if (r == whole) {
+      printf("  CHECK IS BLIND: a value of %d characters measured as drawn whole (x=%d)\n", (int)longer.size(), r);
+      bad++;
+    } else {
+      printf("  negative control OK: a value of %d characters is cut at x=%d, whole it would end at x=%d\n", (int)longer.size(), r, whole);
+    }
+  }
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // The outline of the analogue clock: a ring two pixels wide with no pixel missing.  It used to be two circles,
 // one inside the other, and wherever the two rounded differently a single pixel between them stayed white:
 // seen on the panel as holes in the outline.
@@ -1434,6 +1495,33 @@ int main() {
     for (int i = 0; i < 12; i++) setStr(m.info[i], UI_INFO_LINE_LEN, power[i]);
   }
   snapshot("power", m);
+  {  // the same page with wifi_mode = sync, once sessions have gone wrong: the Radio row and its second row (1.13)
+    char trouble[radioplan::kTroubleRow];
+    radioplan::troubleRow(2, 1, 1, 201, trouble);
+    m = baseModel();
+    m.page = PAGE_POWER;
+    m.batCharge = CHARGE_DISCHARGING;
+    const char *power[] = {
+        "Power     20 MHz (idle), WiFi saver max",
+        "Radio     on 0.8 %, 96 sessions, next in 9 min",
+        "",  // (the second row, made below as the sketch makes it)
+        "Sleep     78.5 % of the time",
+        "Console   off: restart with KEY held to get it back",
+        "Battery   4.117 V = 87.0 % on the curve",
+        "Left      3 d 0 h (1.20 %/h over 300 min)",
+        "Current   about 30.0 mA (of 2500 mAh)",
+        "Log       412 KB, 37 lines this run, 4 min ago",
+        "Shutdown  at 3.30 V, back on at 3.70 V",
+        "Display   low power mode, 8 Hz refresh",
+        "Drift     +1.8 ppm = +0.16 s/day over 18 h",
+        "Config    SD: 7 changed, 1 unchanged",
+        "Units     metric, 24 h, ISO date, week numbers",
+    };
+    m.infoCount = 14;
+    for (int i = 0; i < 14; i++) setStr(m.info[i], UI_INFO_LINE_LEN, power[i]);
+    snprintf(m.info[2], UI_INFO_LINE_LEN, "%-9.9s %.*s", "", UI_INFO_LINE_LEN - 12, trouble);
+    snapshot("power_sync", m);
+  }
   u8g2_ClearBuffer(g_u);
   uiDrawBatteryEmpty(g_u, 3.28f, 3.70f, true);
   hostDumpPgm("out/battery_empty.pgm");
@@ -1527,6 +1615,7 @@ int main() {
   bad += checkFirmwareScreen();      // ...or the firmware-update screen's bar or text is off...
   bad += checkButtonHelp();          // ...or the legend's button help or the restart banner does not fit...
   bad += checkClockRing();           // ...or the clock's outline has a hole in it...
+  bad += checkRadioRows();           // ...or the Radio row's second line is cut short...
   for (uint32_t seed : {20261008u, 7u}) {  // ...or a cube leaves the screen, whichever way it tumbles
     g_cubeSeed = seed;
     bad += checkCube("mirror cube", drawMirrorCube, 2000);

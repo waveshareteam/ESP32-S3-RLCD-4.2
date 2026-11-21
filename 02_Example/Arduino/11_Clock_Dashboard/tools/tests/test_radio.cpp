@@ -1,7 +1,8 @@
 // Host-side tests of the power logic that is not the settings: when the radio is on in "wifi_mode = sync"
 // (radio_plan.h), which CPU clock the clock runs at (clock_policy.h), when the console is shut down
 // (console_policy.h), the picker across radio sessions (wifi_pick.h), the frame planner after a clock change
-// (frame_plan.h), and the light sleep between the frames (light_sleep.h).  Built and run by run_tests.sh.
+// (frame_plan.h), the light sleep between the frames (light_sleep.h), and the radio's wait for the CPU clock with
+// the figures that say why sessions went wrong (clock_policy.h, radio_plan.h).  Built and run by run_tests.sh.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -1891,6 +1892,589 @@ void testLightSleepLoop() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The radio and the CPU clock (1.13)
+// ---------------------------------------------------------------------------
+
+void testClockAnswer() {
+  section("radio and clock: when the UI loop may say the clock is up");
+  using namespace clockpolicy;
+  CHECK(kRadioMinMhz == 80);
+  CHECK(radioMayStart(true, 80, 80, 0) && radioMayStart(true, 240, 240, 0) && radioMayStart(true, 160, 160, 0));
+  CHECK(!radioMayStart(false, 80, 80, 0));    // nothing asked (or asked after the loop looked): no answer
+  CHECK(!radioMayStart(true, 20, 80, 0));     // still to be raised
+  CHECK(!radioMayStart(true, 40, 40, 0));     // where it stays, but WiFi does not work there
+  CHECK(!radioMayStart(true, 80, 240, 0));    // up enough, but about to change under the radio
+  CHECK(radioMayStart(true, 80, 240, 240));   // ... unless the core refused 240: then 80 is where it stays
+  CHECK(!radioMayStart(true, 20, 80, 80));    // a refused 80 MHz is no answer
+  CHECK(!radioMayStart(true, 20, 20, 20));
+  // what target() gives with the radio asking is always an answer (when the core takes it), whatever the settings
+  for (int work : {80, 160, 240})
+    for (int idle : {0, 20, 40, 80, 160}) {
+      Needs n;
+      n.radio = true;
+      for (int poked = 0; poked < 2; poked++) {
+        n.poked = poked != 0;
+        const int want = target(n, work, idle);
+        CHECK(want == work && radioMayStart(true, want, want, 0));
+        Needs off = n;
+        off.radio = false;
+        CHECK(!radioMayStart(false, target(off, work, idle), target(off, work, idle), 0));
+      }
+    }
+}
+
+void testClockWait() {
+  section("radio and clock: the network task's wait");
+  using radioplan::ClockWait;
+  ClockWait w;
+  CHECK(w.waits() == 0 && w.longestMs() == 0 && w.putOff() == 0);
+  // at the idle clock: it waits until the loop has answered and the clock is up, then goes
+  w.begin(1000, 20);
+  CHECK(w.step(1000, false, 20, false) == ClockWait::WAIT);
+  CHECK(w.step(1060, false, 80, false) == ClockWait::WAIT);  // the clock is up, but the loop has not said so: not yet
+  CHECK(w.step(1120, true, 80, false) == ClockWait::GO);
+  CHECK(w.waits() == 1 && w.longestMs() == 120 && w.putOff() == 0);
+  // already fast (a button was pressed): it still waits for the answer, and is not counted as a wait for the clock
+  w.begin(5000, 80);
+  CHECK(w.step(5000, false, 80, false) == ClockWait::WAIT);
+  CHECK(w.step(5010, true, 80, false) == ClockWait::GO);
+  CHECK(w.waits() == 1 && w.longestMs() == 120);
+  // an answer while the clock reads below 80 MHz is not taken (belt and braces)
+  w.begin(9000, 20);
+  CHECK(w.step(9100, true, 20, false) == ClockWait::WAIT);
+  CHECK(w.step(9200, true, 80, false) == ClockWait::GO && w.longestMs() == 200 && w.waits() == 2);
+  // no answer: it waits kClockWaitMs and no longer, and does not go: the start is put off
+  w.begin(20000, 20);
+  for (uint32_t t = 20000; t < 20000 + radioplan::kClockWaitMs; t += 10) {
+    if (w.step(t, false, 20, false) != ClockWait::WAIT) {
+      printf("  gave up after %u ms\n", (unsigned)(t - 20000));
+      CHECK(false);
+      break;
+    }
+  }
+  CHECK(w.step(20000 + radioplan::kClockWaitMs, false, 20, false) == ClockWait::PUT_OFF);
+  CHECK(w.putOff() == 1 && w.waits() == 3 && w.longestMs() == radioplan::kClockWaitMs);
+  w.begin(30000, 80);  // (the loop held up with the clock at 80: put off too, and the clock was not low)
+  CHECK(w.step(30000 + radioplan::kClockWaitMs, false, 80, false) == ClockWait::PUT_OFF && w.putOff() == 2 && w.waits() == 3);
+  // on the way to the deep sleep of the shutdown: no radio, nothing counted
+  w.begin(40000, 20);
+  CHECK(w.step(40010, false, 20, true) == ClockWait::STOP && w.step(40020, true, 80, true) == ClockWait::STOP);
+  CHECK(w.putOff() == 2 && w.waits() == 3);
+  // across the wrap of millis()
+  w.begin(0xFFFFFF00u, 20);
+  CHECK(w.step(0x00000100u, false, 20, false) == ClockWait::WAIT);
+  CHECK(w.step(0x00000200u, true, 80, false) == ClockWait::GO && w.longestMs() == radioplan::kClockWaitMs);
+  // the wait is longer than the longest pass of the loop seen on the board (a frame 3.7 s late) and than a light sleep,
+  // and short against the time a session has to join
+  CHECK(radioplan::kClockWaitMs > 3700 && radioplan::kClockWaitMs > (uint32_t)lightsleep::kMaxSleepUs / 1000);
+  CHECK(radioplan::kClockWaitMs + radioplan::kClockHoldMs < radioplan::kBackoffMs[0]);
+}
+
+void testPostpone() {
+  section("radio plan: a session put off for the clock");
+  {  // put off: no outcome, nothing held against the network, the radio stays off for the hold and comes on after it
+    Drive d;
+    d.in.workDue = true;
+    CHECK(d.step(100) && d.p.state() == Planner::CONNECTING);
+    d.p.postpone(d.t, kClockHoldMs);
+    CHECK(d.p.state() == Planner::OFF && d.p.lastOutcome() == Planner::NONE && !d.p.takeGaveUp());
+    CHECK(d.p.failures() == 0 && d.p.failedSessions() == 0 && d.p.awaySessions() == 0 && d.p.sessions() == 0);
+    CHECK(d.p.holdUntilMs() != 0 && d.p.retryAtMs() == 0);
+    const uint32_t t0 = d.t;
+    bool on = false;
+    while (!on && d.t - t0 < 60000) on = d.step(100);
+    CHECK(on && d.t - t0 >= kClockHoldMs && d.t - t0 <= kClockHoldMs + 200);
+    CHECK(d.p.holdUntilMs() == 0);
+  }
+  {  // a key press waits too (it is the clock that is not ready), and keeps its attempt: when the hold is over, the
+     // session it asked for still comes, and the press is spent only by the session that is given up
+    Drive d(true, 25000);
+    d.in.demand = true;
+    d.in.demandSeq = 5;
+    CHECK(d.step(100));
+    d.p.postpone(d.t, kClockHoldMs);
+    for (int i = 0; i < 90; i++) CHECK(!d.step(100));  // 9 s: still held
+    bool on = false;
+    for (int i = 0; i < 20 && !on; i++) on = d.step(100);
+    CHECK(on && d.p.state() == Planner::CONNECTING);
+    CHECK(d.untilOff(60000, 100) && d.p.lastOutcome() == Planner::FAILED && d.p.failedSessions() == 1);
+    for (int i = 0; i < 100; i++) CHECK(!d.step(100));  // the press had its attempt
+  }
+  {  // a look someone asked for stays one when it is put off: it does not use up a quick look
+    Drive d;
+    d.in.workDue = true;
+    CHECK(d.step(100));
+    for (int i = 0; i < 24; i++) d.step(100);
+    d.in.absent = true;
+    CHECK(!d.step(100) && d.p.takeGaveUp() && d.p.awayLooks() == 1 && d.p.awaySessions() == 1);
+    d.in.absent = false;
+    CHECK(!d.step(10000));
+    d.p.lookNow();
+    CHECK(d.step(100));
+    d.p.postpone(d.t, kClockHoldMs);
+    CHECK(d.p.lastOutcome() == Planner::AWAY);  // (what the Info page says stays as it was)
+    bool on = false;
+    for (int i = 0; i < 200 && !on; i++) on = d.step(100);
+    CHECK(on);
+    for (int i = 0; i < 24; i++) d.step(100);
+    d.in.absent = true;
+    CHECK(!d.step(100) && d.p.awayLooks() == 1 && d.p.awaySessions() == 2);
+  }
+  {  // only a session that is starting can be put off: not one that is off, online, or in always mode
+    Drive d;
+    d.p.postpone(d.t, kClockHoldMs);
+    CHECK(d.p.holdUntilMs() == 0);
+    d.in.workDue = true;
+    d.step(100);
+    d.in.online = true;
+    d.step(100);
+    d.p.postpone(d.t, kClockHoldMs);
+    CHECK(d.p.state() == Planner::ONLINE && d.p.holdUntilMs() == 0);
+    Drive a(false);
+    a.step(100);
+    a.p.postpone(a.t, kClockHoldMs);
+    CHECK(a.p.state() == Planner::CONNECTING && a.step(100));
+  }
+  {  // the time to join counts from when the radio came on: a session that waited 4 s for the clock still has its
+     // 25 s; and the wait was no time on the air
+    for (int told = 0; told < 2; told++) {
+      Drive d(true, 25000);
+      d.in.workDue = true;
+      CHECK(d.step(100));
+      const uint32_t asked = d.t;
+      d.t += 4000;  // (the network task waited for the clock; the planner was not asked meanwhile)
+      if (told) d.p.radioOn(d.t);
+      const uint32_t radioAt = d.t;
+      bool on = true;
+      while (on && d.t - asked < 60000) on = d.step(100);
+      CHECK(!on && d.p.lastOutcome() == Planner::FAILED);
+      if (told) {
+        CHECK(d.t - radioAt >= 25000 && d.t - radioAt <= 25200);
+        CHECK(d.p.radioOnMs(d.t) >= 25000 && d.p.radioOnMs(d.t) <= 25200);
+      } else {  // (and without it, which is how it was: 4 s shorter, and the wait counted as on)
+        CHECK(d.t - asked >= 25000 && d.t - asked <= 25200);
+        CHECK(d.p.radioOnMs(d.t) >= 25000 && d.p.radioOnMs(d.t) <= 25200);
+      }
+    }
+    Drive d;  // (and it only means something for a session that is starting)
+    d.p.radioOn(d.t + 5000);
+    CHECK(d.p.state() == Planner::OFF && !d.step(100) && d.p.radioOnMs(d.t) == 0);
+    Drive j;  // ... not for one that is joined: work that never gets done still ends it 3 minutes after it began
+    j.in.workDue = true;
+    j.step(100);
+    const uint32_t began = j.t;
+    j.in.online = true;
+    for (int i = 0; i < 1000; i++) j.step(100);
+    j.p.radioOn(j.t);
+    bool on = true;
+    while (on && j.t - began < 400000) on = j.step(1000);
+    CHECK(!on && j.p.lastOutcome() == Planner::FAILED && j.t - began >= kSessionMaxMs && j.t - began <= kSessionMaxMs + 1000);
+  }
+  {  // the totals since the start: failed and away sessions are counted apart, and a good session clears neither
+    Drive d;
+    d.in.workDue = true;
+    for (int i = 0; i < 3; i++) {
+      CHECK(d.untilOn(1000000, 100));
+      CHECK(d.untilOff(60000, 100) && d.p.lastOutcome() == Planner::FAILED);
+    }
+    for (int i = 0; i < 2; i++) {
+      CHECK(d.untilOn(1000000, 100));
+      for (int k = 0; k < 24; k++) d.step(100);
+      d.in.absent = true;
+      CHECK(!d.step(100) && d.p.lastOutcome() == Planner::AWAY);
+      d.in.absent = false;
+    }
+    CHECK(d.untilOn(1000000, 100));
+    d.in.online = true;
+    d.step(100);
+    d.in.workDue = false;
+    CHECK(d.untilOff(10000, 100) && d.p.lastOutcome() == Planner::DONE);
+    CHECK(d.p.failedSessions() == 3 && d.p.awaySessions() == 2 && d.p.sessions() == 1 && d.p.failures() == 0 && d.p.awayLooks() == 0);
+  }
+}
+
+// The UI loop (serviceClock() and lightSleepStep() in the .ino) and the network task's start of the radio (startRadio() in
+// net_task.cpp), side by side, by events in microseconds.  A pass of the loop reads the radio's request and sets the
+// clock, where a switch takes effect kSwitchUs after the loop decided on it (the core's own work), answers the
+// request (not with `oldRule`), and then sleeps, naps, draws a frame or is held up.  A light sleep stops both tasks:
+// the network task looks again 10 ms of ticks later, and ticks stand still while the chip sleeps.
+//
+// `oldRule`: the network task does as 1.12 did: it looks at the clock every 10 ms and starts the radio once it reads
+// 80 MHz, or after 300 looks (3 s) regardless.
+struct Tandem {
+  static constexpr int64_t kNever = INT64_MAX;
+  static constexpr int64_t kSwitchUs = 300;   // from the loop's decision to lower the clock to the clock being lower
+  static constexpr int64_t kEntryUs = 3000;   // the SDK's way into a light sleep, while the other core still runs
+  bool oldRule = false;
+  int workMhz = 80, idleMhz = 20;
+  bool lightSleep = false;
+  int64_t sessionUs = 5000000;
+  // the chip, and what the tasks share
+  int64_t now = 0;
+  int mhz = 80;
+  bool asleep = false;
+  bool needsFast = false;
+  uint32_t asked = 0, answered = 0;
+  int64_t pokeUntil = 0;
+  // the UI loop
+  enum Ui { UI_PASS, UI_SWITCH, UI_ENTER, UI_SLEEP, UI_BUSY } ui = UI_PASS;
+  int64_t uiAt = 0;
+  bool radioSeen = false;
+  uint32_t askSeen = 0;
+  int target = 80, pending = 0;
+  int64_t stallUs = 0;  // the next pass is held up this long
+  Rng rng{1};
+  // the scenarios: the network task asks in the middle of the next switch down, of the next way into a sleep, or
+  // just after the next stall began
+  bool askInSwitch = false, askInEntry = false, askInStall = false;
+  // the random run
+  bool randomAsks = false;
+  double stallChance = 0, pokeChance = 0;
+  int64_t longestStallUs = 4500000;
+  // the network task
+  enum Net { NET_IDLE, NET_WAIT, NET_ON } net = NET_IDLE;
+  int64_t netAt = kNever, askAt = kNever;
+  bool netTicks = false;  // netAt is a wait in ticks (a light sleep puts it off)
+  uint32_t myAsk = 0;
+  int looks = 0;
+  radioplan::ClockWait wait;
+  // what was seen
+  int asks = 0, starts = 0, startsLow = 0, putOff = 0, changesWhileOn = 0, stalls = 0;
+  int64_t lowOnUs = 0, asleepOnUs = 0;
+
+  explicit Tandem(bool old, uint64_t seed = 1) : oldRule(old), rng(seed) {}
+  static uint32_t ms(int64_t us) { return (uint32_t)(us / 1000); }
+  int violations() const { return startsLow + changesWhileOn + (lowOnUs > 0) + (asleepOnUs > 0); }
+
+  void run(int64_t forUs) {
+    const int64_t end = now + forUs;
+    for (;;) {
+      const int64_t netNext = asleep ? kNever : std::min(netAt, askAt);
+      int64_t next = std::min(std::min(uiAt, netNext), end);
+      if (next < now) next = now;  // (what fell due while the chip slept happens as it wakes)
+      if (net == NET_ON) {  // what the radio had under it until then
+        if (mhz < 80) lowOnUs += next - now;
+        if (asleep) asleepOnUs += next - now;
+      }
+      now = next;
+      if (uiAt <= now) {
+        uiStep();
+      } else if (!asleep && askAt <= now) {
+        ask();
+      } else if (!asleep && netAt <= now) {
+        netStep();
+      } else if (now >= end) {
+        return;
+      }
+    }
+  }
+
+  void uiStep() {
+    switch (ui) {
+      case UI_PASS: {  // serviceClock(): the request's number first, then the request, then the clock
+        if (randomAsks && rng.uni() < pokeChance) pokeUntil = now + (int64_t)clockpolicy::kPokeMs * 1000;
+        askSeen = asked;
+        radioSeen = needsFast;
+        clockpolicy::Needs n;
+        n.radio = radioSeen;
+        n.poked = now < pokeUntil;
+        target = clockpolicy::target(n, workMhz, idleMhz);
+        if (clockpolicy::mayChange(mhz, target, true)) {
+          pending = target;
+          ui = UI_SWITCH;
+          uiAt = now + kSwitchUs;
+          if (askInSwitch && target < mhz) {
+            askInSwitch = false;
+            askAt = now + kSwitchUs / 2;
+          }
+          return;
+        }
+        finishPass();
+        return;
+      }
+      case UI_SWITCH:
+        if (net == NET_ON) changesWhileOn++;
+        mhz = pending;
+        finishPass();
+        return;
+      case UI_ENTER: {
+        asleep = true;
+        ui = UI_SLEEP;
+        const int64_t len = 100000 + (int64_t)(800000 * rng.uni());
+        uiAt = now + len;
+        if (netTicks && netAt != kNever) netAt += len;
+        return;
+      }
+      case UI_SLEEP:
+        asleep = false;
+        ui = UI_PASS;
+        return;
+      case UI_BUSY:
+        ui = UI_PASS;
+        return;
+    }
+  }
+  void finishPass() {
+    if (!oldRule && clockpolicy::radioMayStart(radioSeen, mhz, target, 0)) answered = askSeen;
+    ui = UI_BUSY;
+    if (stallUs == 0 && randomAsks && rng.uni() < stallChance) stallUs = 200000 + (int64_t)((longestStallUs - 200000) * rng.uni());
+    if (stallUs > 0) {  // held up: a slow line of the power log, a frame 3.7 s late
+      uiAt = now + stallUs;
+      stallUs = 0;
+      stalls++;
+      if (askInStall) {
+        askInStall = false;
+        askAt = now + 1000;
+      }
+      return;
+    }
+    // lightSleepStep(): the request is read again; with it, or a button a moment ago, no sleep
+    if (lightSleep && !needsFast && now >= pokeUntil && rng.uni() < 0.5) {
+      ui = UI_ENTER;
+      uiAt = now + kEntryUs;
+      if (askInEntry) {
+        askInEntry = false;
+        askAt = now + kEntryUs / 2;
+      }
+      return;
+    }
+    uiAt = now + (rng.uni() < 0.3 ? (int64_t)30000 * 80 / mhz : 4000);  // a frame (four times as long at 20 MHz), or a nap
+  }
+
+  void ask() {  // startRadio(): the request, and the first look at once
+    askAt = kNever;
+    asks++;
+    needsFast = true;
+    myAsk = ++asked;
+    looks = 0;
+    wait.begin(ms(now), mhz);
+    net = NET_WAIT;
+    netStep();
+  }
+  void netStep() {
+    if (net == NET_WAIT) {
+      if (oldRule) {
+        if (mhz >= 80 || looks >= 300) {
+          start();
+          return;
+        }
+        looks++;
+      } else {
+        const radioplan::ClockWait::Step s = wait.step(ms(now), answered == myAsk, mhz, false);
+        if (s == radioplan::ClockWait::GO) {
+          start();
+          return;
+        }
+        if (s == radioplan::ClockWait::PUT_OFF) {  // the session is put off; the radio asks again after the hold
+          putOff++;
+          needsFast = false;
+          net = NET_IDLE;
+          netAt = kNever;
+          askAt = now + (int64_t)radioplan::kClockHoldMs * 1000;
+          return;
+        }
+      }
+      netAt = now + 10000;
+      netTicks = true;
+      return;
+    }
+    if (net == NET_ON) {  // the session is over: the radio goes off, and then the clock may come down
+      net = NET_IDLE;
+      needsFast = false;
+      netAt = kNever;
+      if (randomAsks) askAt = now + 2000000 + (int64_t)(60000000 * rng.uni());
+    }
+  }
+  void start() {
+    starts++;
+    if (mhz < 80) startsLow++;
+    net = NET_ON;
+    netAt = now + sessionUs;
+    netTicks = false;  // (the session's time is by millis(), which a light sleep does not stop)
+  }
+};
+
+void testRadioClockTasks() {
+  section("radio and clock: the UI loop and the network task side by side");
+  auto report = [](const char *what, const Tandem &t) {
+    printf("  (%s, %s: %d starts, %d below 80 MHz, %.1f ms below 80 MHz and %.1f ms asleep with the radio on, %d clock changes under it, "
+           "%d put off, the longest wait %u ms)\n",
+           what, t.oldRule ? "the old rule" : "now", t.starts, t.startsLow, t.lowOnUs / 1000.0, t.asleepOnUs / 1000.0, t.changesWhileOn,
+           t.putOff, (unsigned)t.wait.longestMs());
+  };
+  for (int old = 0; old < 2; old++) {
+    {  // the loop is held up for 3.7 s (the longest seen on the board) just as the radio asks
+      Tandem t(old != 0);
+      t.mhz = 20;
+      t.run(2000000);
+      t.stallUs = 3700000;
+      t.askInStall = true;
+      t.run(12000000);
+      report("held up 3.7 s", t);
+      CHECK(t.asks == 1 && t.starts == 1);
+      if (old) {
+        CHECK(t.startsLow == 1);  // what 1.12 did: the radio came on at 20 MHz after 3 s
+      } else {
+        CHECK(t.startsLow == 0 && t.lowOnUs == 0 && t.putOff == 0);
+        CHECK(t.wait.longestMs() >= 3650 && t.wait.longestMs() <= 3900 && t.wait.waits() == 1);
+      }
+    }
+    {  // held up for 6 s: put off, not started at 20 MHz; the next try comes after the hold and goes
+      Tandem t(old != 0);
+      t.mhz = 20;
+      t.run(2000000);
+      t.stallUs = 6000000;
+      t.askInStall = true;
+      t.run(30000000);
+      report("held up 6 s", t);
+      if (old) {
+        CHECK(t.startsLow == 1);
+      } else {
+        CHECK(t.putOff == 1 && t.wait.putOff() == 1 && t.asks == 2 && t.starts == 1 && t.startsLow == 0 && t.lowOnUs == 0);
+      }
+    }
+    {  // the clock comes down (a button's 8 s are over) in the very moment the radio asks: the loop read "no radio" a
+       // moment before
+      Tandem t(old != 0);
+      t.mhz = 20;
+      t.run(1000000);
+      t.pokeUntil = t.now + 8000000;
+      t.run(1000000);
+      CHECK(t.mhz == 80);
+      t.askInSwitch = true;
+      t.run(15000000);
+      report("the clock comes down as the radio asks", t);
+      CHECK(t.asks == 1 && t.starts == 1);
+      if (old) {
+        CHECK(t.changesWhileOn >= 1 && t.lowOnUs > 0);  // started at 80, then lowered under it (and raised again)
+      } else {
+        CHECK(t.startsLow == 0 && t.changesWhileOn == 0 && t.lowOnUs == 0);
+      }
+    }
+    {  // no idle clock, light sleep on: the chip is on its way into a sleep as the radio asks
+      Tandem t(old != 0);
+      t.idleMhz = 0;
+      t.lightSleep = true;
+      t.run(1000000);
+      t.askInEntry = true;
+      t.run(15000000);
+      report("a light sleep begins as the radio asks", t);
+      CHECK(t.asks == 1 && t.starts == 1 && t.startsLow == 0);
+      if (old) {
+        CHECK(t.asleepOnUs > 0);  // the radio came on, and the chip went to sleep under it
+      } else {
+        CHECK(t.asleepOnUs == 0);
+      }
+    }
+    {  // cpu_mhz = 240 with cpu_idle_mhz = 80: the clock is up enough at once, and still to be raised
+      Tandem t(old != 0);
+      t.workMhz = 240;
+      t.idleMhz = 80;
+      t.run(1000000);
+      CHECK(t.mhz == 80);
+      t.askAt = t.now + 1234;
+      t.run(10000000);
+      report("240 MHz with an idle clock of 80", t);
+      CHECK(t.asks == 1 && t.starts == 1 && t.startsLow == 0);
+      CHECK(t.changesWhileOn == (old ? 1 : 0));  // (1.12: the radio started at 80 and the clock went to 240 under it)
+    }
+  }
+  // the same rules over many hours: sessions every few seconds to a minute, presses, stalls up to 4.5 s, light sleep on
+  // and off, every idle clock.  Now: never a radio below 80 MHz, asleep, or under a clock change, and nothing put off
+  // (no stall is long enough).  The old rule, on the very same days, runs into each of the cases above.
+  int oldViolations = 0;
+  for (int idle : {20, 40, 0})
+    for (int sleep = 0; sleep < 2; sleep++)
+      for (int old = 0; old < 2; old++) {
+        Tandem t(old != 0, 77 + (uint64_t)idle * 3 + (uint64_t)sleep);
+        t.idleMhz = idle;
+        t.lightSleep = sleep != 0;
+        t.randomAsks = true;
+        t.stallChance = 0.0005;
+        t.pokeChance = 0.0003;
+        t.mhz = idle > 0 ? idle : 80;
+        t.askAt = 3000000;
+        t.run(6LL * 3600 * 1000000);
+        if (old) {
+          oldViolations += t.violations();
+          continue;
+        }
+        if (t.violations() || t.putOff || idle == 20) {
+          char what[48];
+          snprintf(what, sizeof what, "6 h, idle %d MHz, light sleep %s", idle, sleep ? "on" : "off");
+          report(what, t);
+        }
+        CHECK(t.starts > 300 && t.stalls > 10);
+        CHECK(t.violations() == 0 && t.putOff == 0);
+        CHECK(t.wait.longestMs() < radioplan::kClockWaitMs);
+        CHECK(t.asks == t.starts || t.asks == t.starts + 1);  // (the last may still be waiting)
+      }
+  printf("  (the old rule on the same days: %d starts below 80 MHz, under a clock change, or with the clock low or asleep)\n", oldViolations);
+  CHECK(oldViolations > 0);
+}
+
+void testTroubleRow() {
+  section("radio: the second Radio row of the Power and settings page");
+  using radioplan::troubleRow;
+  char row[radioplan::kTroubleRow];
+  CHECK(!troubleRow(0, 0, 0, 0, row) && row[0] == 0);  // all is well: no row at all
+  CHECK(troubleRow(0, 0, 0, 201, row));
+  CHECK_STR(row, "0 failed, 0 away, WiFi said 201");
+  CHECK(troubleRow(2, 1, 0, 201, row));
+  CHECK_STR(row, "2 failed, 1 away, WiFi said 201");
+  CHECK(troubleRow(2, 1, 1, 201, row));
+  CHECK_STR(row, "2 failed, 1 away, 1 put off, WiFi said 201");
+  CHECK(strlen(row) == radioplan::kTroubleRow - 1);  // (exactly as wide as the page: the README's example)
+  CHECK(troubleRow(3, 0, 0, 0, row));
+  CHECK_STR(row, "3 failed, 0 away");
+  CHECK(troubleRow(0, 0, 2, 0, row));
+  CHECK_STR(row, "0 failed, 0 away, 2 put off");
+  CHECK(troubleRow(12, 288, 3, 201, row));
+  CHECK_STR(row, "12 failed, 288 away, 3 put off, WiFi 201");  // a little less said, all of it there
+  CHECK(troubleRow(10000, 4294967295u, 9999, 15, row));
+  CHECK_STR(row, "9999+ failed, 9999+ away, 9999 put off");
+  // whatever the figures, the row fits (42 characters), and every count in it is the one given (or 9999+)
+  const uint32_t counts[] = {0, 1, 9, 10, 99, 100, 999, 1000, 9999, 10000, 4294967295u};
+  int rows = 0, widest = 0, reasonsShown = 0;
+  for (uint32_t f : counts)
+    for (uint32_t a : counts)
+      for (uint32_t p : counts)
+        for (unsigned reason : {0u, 2u, 15u, 201u, 255u}) {
+          const bool any = troubleRow(f, a, p, (uint8_t)reason, row);
+          if (!any) {
+            CHECK(f == 0 && a == 0 && p == 0 && reason == 0);
+            continue;
+          }
+          rows++;
+          const int len = (int)strlen(row);
+          if (len > widest) widest = len;
+          CHECK(len < (int)radioplan::kTroubleRow);
+          auto shown = [](uint32_t v) { return v > 9999 ? std::string("9999+") : std::to_string(v); };
+          CHECK(std::string(row).find(shown(f) + " failed, " + shown(a) + " away") == 0);
+          CHECK((p > 0) == (std::string(row).find(", " + shown(p) + " put off") != std::string::npos));
+          const size_t at = std::string(row).find("WiFi");
+          if (at != std::string::npos) {
+            reasonsShown++;
+            CHECK(reason != 0 && std::string(row).substr(std::string(row).rfind(' ') + 1) == std::to_string(reason));
+          } else if (reason != 0) {  // left out only when even ", WiFi 201" would not fit
+            CHECK(shown(f).size() + 9 + shown(a).size() + 5 + (p ? 2 + shown(p).size() + 8 : 0) + 7 + std::to_string(reason).size() > 42);
+          }
+        }
+  printf("  (%d rows, the widest %d characters, the reason given in %d)\n", rows, widest, reasonsShown);
+  CHECK(widest == 42 && reasonsShown > rows / 2);
+  {  // the check can fail: the first form, as it is, does not fit with the largest figures
+    char big[96];
+    const int n = snprintf(big, sizeof big, "%s failed, %s away, %s put off, WiFi said %u", "9999+", "9999+", "9999+", 212u);
+    CHECK(n >= (int)radioplan::kTroubleRow);
+  }
+  // the words for a reason, for the serial console
+  CHECK_STR(radioplan::reasonText(201), "no such network");
+  CHECK_STR(radioplan::reasonText(15), "key exchange timed out");
+  CHECK_STR(radioplan::reasonText(0), "none yet");
+  CHECK_STR(radioplan::reasonText(77), "");
+}
+
 }  // namespace
 
 int main() {
@@ -1912,6 +2496,11 @@ int main() {
   testNapSteps();
   testWallFix();
   testLightSleepLoop();
+  testClockAnswer();
+  testClockWait();
+  testPostpone();
+  testRadioClockTasks();
+  testTroubleRow();
   printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed ? 1 : 0;
 }

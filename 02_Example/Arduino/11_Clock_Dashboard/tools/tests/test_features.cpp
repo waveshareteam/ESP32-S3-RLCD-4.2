@@ -3160,6 +3160,12 @@ powerlog::Reading sampleReading(const Settings &s) {
   r.radioSync = true;
   r.radioOnPermille = 8;
   r.radioSessions = 96;
+  r.radioFailed = 2;
+  r.radioAway = 1;
+  r.clockWaits = 95;
+  r.clockWaitMaxMs = 140;
+  r.clockPutOff = 1;
+  r.wifiReason = 201;
   r.asleepPermille = 785;
   r.batteryPresent = true;
   r.batteryVolts = 4.117f;
@@ -3224,11 +3230,11 @@ void testPowerLogLine() {
   const Settings s = sampleLogSettings();
   const Reading r = sampleReading(s);
   const std::string line = logLine(r);
-  CHECK_STR(line.c_str(), ",1.7 3f9a12c,on,sync,max,20,off,auto,on,low,2500,,playing,2026-10-08,14:30,0d 3h 12m,20 idle,0.8,96,78.5,4.117,87.0,"
-                          "discharging,3 d 0 h,1.20,300,30.0,,187,11520,2,61,\r\n");
-  CHECK(line.size() >= 140 && line.size() <= 170);  // (the README's "3,000 to 7,000 lines" rests on a line of about this length)
-  for (const char *example : {"`0d 3h 12m`", "`20 idle`", "`0.8` and `96`", "`78.5`", "`4.117` and `87.0`", "`3 d 0 h`, `1.20` and `300`", "`2026-10-08`",
-                              "`14:30`"}) {
+  CHECK_STR(line.c_str(), ",1.7 3f9a12c,on,sync,max,20,off,auto,on,low,2500,,playing,2026-10-08,14:30,0d 3h 12m,20 idle,0.8,96,2,1,95,140,1,201,78.5,"
+                          "4.117,87.0,discharging,3 d 0 h,1.20,300,30.0,,187,11520,2,61,\r\n");
+  CHECK(line.size() >= 170 && line.size() <= 190);  // (the README's "about 180 bytes" and "2,900 to 5,800 lines" rest on a line of about this length)
+  for (const char *example : {"`0d 3h 12m`", "`20 idle`", "`0.8` and `96`", "`2`, `1`, `1` and `201`", "`95` and `140`", "`78.5`", "`4.117` and `87.0`",
+                              "`3 d 0 h`, `1.20` and `300`", "`2026-10-08`", "`14:30`", "`2 failed, 1 away, 1 put off, WiFi said 201`"}) {
     if (readme.find(example) == std::string::npos) printf("  the README no longer gives %s as an example\n", example);
     CHECK(readme.find(example) != std::string::npos);
   }
@@ -3303,8 +3309,9 @@ void testPowerLogLine() {
     CHECK(f.size() == (size_t)kColumnCount);
     if (f.size() == (size_t)kColumnCount) {
       for (int c : {C_TEST, C_FIRMWARE, C_WIFI, C_WIFI_MODE, C_WIFI_POWER_SAVE, C_CPU_IDLE_MHZ, C_SPOTIFY_LIVE, C_CONSOLE, C_LIGHT_SLEEP,
-                    C_BATTERY_CAPACITY_MAH, C_CARD, C_MUSIC, C_DATE, C_TIME, C_CLOCK_SHOWN, C_RADIO_ON_PCT, C_RADIO_SESSIONS, C_ASLEEP_PCT,
-                    C_BATTERY_V, C_BATTERY_PCT, C_LEFT, C_PCT_PER_HOUR, C_OVER_MIN, C_CLOCK_MA, C_METER_MA, C_NOTES}) {
+                    C_BATTERY_CAPACITY_MAH, C_CARD, C_MUSIC, C_DATE, C_TIME, C_CLOCK_SHOWN, C_RADIO_ON_PCT, C_RADIO_SESSIONS, C_RADIO_FAILED,
+                    C_RADIO_AWAY, C_CLOCK_WAITS, C_CLOCK_WAIT_MS, C_CLOCK_PUT_OFF, C_WIFI_REASON, C_ASLEEP_PCT, C_BATTERY_V, C_BATTERY_PCT,
+                    C_LEFT, C_PCT_PER_HOUR, C_OVER_MIN, C_CLOCK_MA, C_METER_MA, C_NOTES}) {
         if (!f[(size_t)c].empty()) printf("  %s is '%s' for a reading that knows nothing\n", columnName(c), f[(size_t)c].c_str());
         CHECK(f[(size_t)c].empty());
       }
@@ -3363,6 +3370,27 @@ void testPowerLogLine() {
     t.radioOnPermille = 35;
     t.radioSessions = 4294967295u;
     CHECK(logField(t, C_RADIO_ON_PCT) == "3.5" && logField(t, C_RADIO_SESSIONS) == "4294967295");
+  }
+  // why sessions went wrong (1.13): the counts as the Radio line's second row and the console have them, in sync mode
+  // only (as the Radio line), and the WiFi stack's last reason in either mode, once it has given one
+  {
+    Reading t = r;
+    CHECK(logField(t, C_RADIO_FAILED) == "2" && logField(t, C_RADIO_AWAY) == "1" && logField(t, C_CLOCK_WAITS) == "95" &&
+          logField(t, C_CLOCK_WAIT_MS) == "140" && logField(t, C_CLOCK_PUT_OFF) == "1" && logField(t, C_WIFI_REASON) == "201");
+    t.radioFailed = t.radioAway = t.clockWaits = t.clockWaitMaxMs = t.clockPutOff = 0;  // nothing went wrong: 0, not empty
+    t.wifiReason = 0;                                                                   // ... and no reason given yet: empty
+    CHECK(logField(t, C_RADIO_FAILED) == "0" && logField(t, C_RADIO_AWAY) == "0" && logField(t, C_CLOCK_WAITS) == "0" &&
+          logField(t, C_CLOCK_WAIT_MS) == "0" && logField(t, C_CLOCK_PUT_OFF) == "0" && logField(t, C_WIFI_REASON).empty());
+    t = r;
+    t.radioSync = false;  // always mode (or WiFi off): no session figures; the reason, which always mode has too, stays
+    for (Column c : {C_RADIO_FAILED, C_RADIO_AWAY, C_CLOCK_WAITS, C_CLOCK_WAIT_MS, C_CLOCK_PUT_OFF}) CHECK(logField(t, c).empty());
+    CHECK(logField(t, C_WIFI_REASON) == "201");
+    t = r;
+    t.radioFailed = t.radioAway = t.clockWaits = t.clockWaitMaxMs = t.clockPutOff = 4294967295u;
+    t.wifiReason = 255;
+    CHECK(logField(t, C_RADIO_FAILED) == "4294967295" && logField(t, C_CLOCK_WAIT_MS) == "4294967295" && logField(t, C_WIFI_REASON) == "255");
+    CHECK(col("radio_failed") == C_RADIO_FAILED && col("clock_put_off") == C_CLOCK_PUT_OFF && col("wifi_reason") == C_WIFI_REASON);
+    CHECK(C_RADIO_FAILED == C_RADIO_SESSIONS + 1 && C_ASLEEP_PCT == C_WIFI_REASON + 1);  // (next to the radio's other columns)
   }
   // music: what Spotify said, and nothing when no account is linked
   {
@@ -3514,6 +3542,8 @@ void testPowerLogLine() {
     t.clockReason = "a reason that is far too long to be one";
     t.radioOnPermille = 1000;
     t.radioSessions = 4294967295u;
+    t.radioFailed = t.radioAway = t.clockWaits = t.clockWaitMaxMs = t.clockPutOff = 4294967295u;
+    t.wifiReason = 255;
     t.batteryVolts = 4.2f;
     t.estimate.pctPerHour = 99.9f;
     t.estimate.hoursLeft = 47.99f;

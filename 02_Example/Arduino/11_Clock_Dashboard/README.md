@@ -1,7 +1,7 @@
 # 11_Clock_Dashboard
 
 A desk clock for the Waveshare ESP32-S3-RLCD-4.2: it joins your WiFi, sets the time over NTP, works out the
-time zone (including daylight saving) by itself, and shows everything on the reflective LCD. Version **1.12**
+time zone (including daylight saving) by itself, and shows everything on the reflective LCD. Version **1.13**
 ([what changed](#versions)).
 
 <img src="docs/dashboard.png" alt="Dashboard" width="560">
@@ -25,7 +25,8 @@ time zone (including daylight saving) by itself, and shows everything on the ref
 > board's owner). Of what came with 1.3 and after, the owner has since seen three things work there: **a settings
 > file read from an SD card, a firmware installed from the card, and the processor slowed to 20 MHz** between syncs.
 > The rest, **the shutdown, how good the runtime estimate is, the clock drift measurement, the moon, the backup
-> network, most of [Saving power](#saving-power), the power log, the light sleep, the display's low power mode**, as well as the Spotify linking flow, the charging indicator and the
+> network, most of [Saving power](#saving-power), the power log, the light sleep, the display's low power mode, the
+> radio's wait for the processor**, as well as the Spotify linking flow, the charging indicator and the
 > frame scheduler from earlier, has so far only been checked on a PC (renderer, fuzz test, simulations, tens of
 > thousands of host-side checks) and compiled for the board. [Not yet tried on the board](#not-yet-tried-on-the-board)
 > goes through it item by item, and [Troubleshooting](#troubleshooting) says what to look at if a first guess is off.
@@ -676,6 +677,15 @@ next one waits 1, 2, 5, 10 and then 15 minutes, so a clock that is locked out do
 does not wait for that, and one press buys one attempt. The *System info* page says *cannot join, next try in 9 min*.
 The backup network is tried first when it was the one that worked last time.
 
+**When the processor is not ready** (since 1.13). WiFi works from 80 MHz up, and with `cpu_idle_mhz` the processor runs
+slower between sessions, so it is brought up to `cpu_mhz` first (see [The idle clock](#the-idle-clock)). Up to 1.12 the
+radio waited at most 3 seconds for that and then came on regardless. A radio that comes on below 80 MHz would hear
+nothing, and a scan that hears nothing says "no such network", which ends the session as *No known WiFi in range* until
+the next look two minutes later. The radio now comes on only once the UI loop, which sets the clock, has said that the
+clock is up and will stay up. If it has not said so within 5 seconds, the session is put off for 10 seconds and counted;
+nothing is held against the network, and a key press keeps its attempt. Whether this is why the clock now and then missed
+its network is not known: the clock keeps the figures that will tell, see below.
+
 (None of this applies to `wifi_mode = always`: there the radio keeps looking without a pause for as long as it has no
 network, which is the dearest thing it can do. A clock that travels is better off in sync mode.)
 
@@ -694,6 +704,27 @@ rules):
 The *Power and settings* page shows the real figure (`on 0.8 %, 96 sessions, next in 9 min`) and the *System info* page
 says `asleep (sync mode), next in 9 min` while the radio is off. What is not known is the current: how much a session
 costs (association, the TLS handshakes) and what the board draws with the radio off.
+
+Under the *Radio* row, once a session has gone wrong, a second row (since 1.13) says how many sessions since the start
+were given up (*failed*, as above) and how many found no network (*away*), how many were put off because the processor
+was not ready (only when any were), and the last reason the WiFi stack gave for a refused or dropped connection:
+`2 failed, 1 away, 1 put off, WiFi said 201`. On the fullest page it is left out; the [power log](#the-clocks-own-log)
+has the same figures. The reasons are ESP-IDF's numbers, and these are the ones worth knowing:
+
+| *WiFi said* | What it means |
+| --- | --- |
+| 2 | the router ended the authentication (a wrong password can look like this) |
+| 15 | the key exchange did not finish: usually a wrong password |
+| 200 | the router's beacons stopped coming: it went off, or the radio stopped hearing it |
+| 201 | a scan of every channel found no network of that name |
+| 202 to 205 | the authentication, the association, the handshake or the connection failed |
+| 210 | a network of that name is there, but not with a kind of security the clock takes |
+
+`power` in the serial console prints the same, with the reason in words. What the figures say about a clock that missed
+its network: *put off* above 0, or a `clock_wait_ms` of 3000 or more in the power log, means the processor was not up in
+time when the radio was wanted, and up to 1.12 the radio would then have come on below 80 MHz. *away* that goes up while
+the router was on, with `201`, means the scans did not hear it. *failed* with `15` or `2` means the router turned the
+clock away; with another number, or the one from before, the lines of the power log around it are the place to look.
 
 Things to expect in this mode: the status bar says *Connecting to WiFi...* for a few seconds every quarter of an hour; the
 dashboard's Spotify strip is as old as the last session when nothing is playing (a paused track stays until a session
@@ -723,7 +754,8 @@ radio that is on all the time. What that costs:
 
 `cpu_idle_mhz = 40` (or `20`; `80` when `cpu_mhz` is higher; `off` for no change; `#define CPU_IDLE_MHZ 40`) lowers the
 processor's clock **whenever the radio is off**: with `wifi = off`, or between the sessions of `wifi_mode = sync`. The
-clock goes back to `cpu_mhz` **before** the radio is switched on (WiFi works from 80 MHz up) and drops **after** it is off.
+clock goes back to `cpu_mhz` **before** the radio is switched on (WiFi works from 80 MHz up; since 1.13 the radio waits
+until the UI loop has said so, see [WiFi sync mode](#wifi-sync-mode)) and drops **after** it is off.
 It also goes back while a button is down and for 8 seconds after (a frame takes four times as long to draw at 20 MHz as at
 80, and whoever pressed wants the answer quickly), and **for as long as a computer is on the USB port and the console
 runs**: below 80 MHz the clock of some peripherals follows the CPU and the USB console may stop, which would look like a
@@ -967,6 +999,8 @@ the writing: with `power_log = on` it keeps the same readings itself, every ten 
 | `date`, `time`, `uptime` | When the reading was taken (`2026-10-08`, `14:30`), and the *Uptime* line (`0d 3h 12m`) |
 | `clock_shown` | *Power and settings*, the *Power* line: `20 idle`. Wait ten seconds after the last button press: a press takes the processor to full speed for eight |
 | `radio_on_pct`, `radio_sessions` | The *Radio* line (only with `wifi_mode = sync`): `0.8` and `96` |
+| `radio_failed`, `radio_away`, `clock_put_off`, `wifi_reason` | The *Radio* line's second row (since 1.13; only with `wifi_mode = sync`, and only once something went wrong): `2 failed, 1 away, 1 put off, WiFi said 201` gives `2`, `1`, `1` and `201`. No such row: `0`, `0`, `0` and nothing. The clock's own log has `wifi_reason` in either mode |
+| `clock_waits`, `clock_wait_ms` | Not on the screen: `power` in the serial console, *radio starts that waited for the clock 95 (the longest 140 ms)* gives `95` and `140`. With `cpu_idle_mhz` set nearly every session waits a moment for the clock; the longest wait is the figure that matters |
 | `asleep_pct` | The *Sleep* line (only with `light_sleep = on`): the share of the time asleep since the start, `78.5` |
 | `battery_v`, `battery_pct` | *Power and settings*, the *Battery* line: `4.117` and `87.0` |
 | `battery_state` | *System info*, the *Battery* line: `on battery?`, `discharging`, `charging` or `full` |
@@ -988,9 +1022,8 @@ both. It is off by default, **new in 1.7 and not yet tried on the board**.
 
 * **What it fills in.** Every column of the table that the clock can know: the firmware, the eight settings, the
   capacity (when it is set), the date and the time (only once the clock is trusted; the uptime is always there), the
-  CPU clock and why it is there, the radio's share, the share asleep, the battery, the three figures of the *Left* line
-  and the current,
-  the memory and the frames. `music` is what Spotify said last (`playing`, `paused` or `none`; empty when no account is
+  CPU clock and why it is there, the radio's share and what went wrong with its sessions, the share asleep, the
+  battery, the three figures of the *Left* line and the current, the memory and the frames. `music` is what Spotify said last (`playing`, `paused` or `none`; empty when no account is
   linked). `battery_state` can also say `starting up` or `learning` (the first minutes after a start) and `none` (no
   battery in use). The figures of the runtime estimate stay empty until it has its first one, 50 minutes after a
   start, and while a charger shows; a fall too slow to measure is given as the rate it is, with `>30 d` for the time.
@@ -1006,16 +1039,16 @@ both. It is off by default, **new in 1.7 and not yet tried on the board**.
   log off still gets the copy, that once. Or type **`powerlog`** in the serial console: it prints the whole log as
   CSV. The clock stands still while it prints (a few seconds for a full log), and the console's own log lines are held
   back so that none lands in the middle. `powerlog clear` forgets the log.
-* **How much it keeps.** The newest 0.5 to 1 MB: 3,300 to 6,700 lines of the usual length, three to six weeks of them.
+* **How much it keeps.** The newest 0.5 to 1 MB: 2,900 to 5,800 lines of the usual length, three to six weeks of them.
   The log is two files; when the newer one reaches half a megabyte the older one is deleted and the newer takes its
   place, so the oldest half goes at once and nothing is ever written out a second time. A firmware that logs other
   columns starts a new file under its own heading, and the copy then has a second heading where the columns change.
 * **Where it shows.** A *Log* row on the *Power and settings* page: `412 KB, 37 lines this run, 4 min ago`, or what is
   wrong (see [Troubleshooting](#troubleshooting)). After three lines in a row that could not be written the log stops
   until the next start, and a line that fails is not tried again before the next one is due.
-* **What a line costs.** A line is about 160 bytes, but flash is rewritten 4 KB at a time: the sector with the end of
+* **What a line costs.** A line is about 180 bytes, but flash is rewritten 4 KB at a time: the sector with the end of
   the file and the one with the directory entry (FAT keeps the file's length there) are each erased (about 45 ms) and
-  written (about 10 ms), while the flash chip draws some 20 mA. About every 25th line begins a new 4 KB of the file
+  written (about 10 ms), while the flash chip draws some 20 mA. About every 23rd line begins a new 4 KB of the file
   and rewrites both copies of the allocation table as well, and about every 7th the wear levelling moves a sector.
   That makes 0.1 to 0.3 seconds a line with the processor busy instead of idle: roughly **5 mA·s a line, 0.008 mA on
   average** at six lines an hour, under a thousandth of a clock that draws 10 mA. Nothing happens in between: the
@@ -1077,6 +1110,8 @@ both. It is off by default, **new in 1.7 and not yet tried on the board**.
 | *asleep (sync mode)* and no Spotify | Expected with `wifi_mode = sync`: press KEY once, or open the *Now Playing* page, and the radio comes on, see [Saving power](#saving-power) |
 | *No known WiFi in range* | `wifi_mode = sync` and none of the clock's networks answered. It looks again every 2 minutes, later every 5, and at once when any button is pressed. If the network is right there, check the name (it has to match exactly) |
 | *No WiFi, trying again later*, the Info page says *cannot join* | `wifi_mode = sync`: the network is there but the clock cannot get in (the password?), or it joins and nothing gets done. It tries again after 1, 2, 5, 10 and then every 15 minutes; KEY tries now |
+| A second *Radio* row on *Power and settings*, `2 failed, 1 away, WiFi said 201` | That many sessions since the start were given up or found no network, and that is what the WiFi stack said last; [WiFi sync mode](#wifi-sync-mode) says what the numbers mean. A few over days is no trouble (a router restarts, a hotspot comes and goes); many, with the router on and close, are worth a power log |
+| The second *Radio* row says *put off* | The radio was wanted and the processor was not up within 5 seconds, so the session was put off for 10 (since 1.13; before, the radio came on regardless). It should not happen: tell someone, with the power log if it is on |
 | The Spotify strip shows a track that was skipped a while ago | `spotify_live = off`: the clock looks once a track, see [Music in sync mode](#music-in-sync-mode). Press KEY, open the *Now Playing* page, or set `spotify_live = on` |
 | The computer does not see the clock (no serial port, the IDE cannot upload) | `console = auto` or `off` has shut the USB port down. Restart the clock with KEY held (the console stays on for that run; `set console = on` there makes it stay), or with `auto` just restart it with the cable in, or hold BOOT while switching on; see [The console](#the-console) |
 | The serial console stops a minute after start with `cpu_idle_mhz` set | The clock was slowed below 80 MHz with a computer attached: the clock stays fast while the USB port shows a computer (`power` in the console says so), but a build with *USB Mode: USB-OTG (TinyUSB)* cannot tell. Set `cpu_idle_mhz = off` while debugging |
@@ -1097,7 +1132,7 @@ both. It is off by default, **new in 1.7 and not yet tried on the board**.
 
 Serial console commands: `status`, `battery`, `batcal V` (calibrate the battery voltage to what a tester shows, see
 [Calibrating the voltage](#calibrating-the-voltage)), `power` (the CPU clock and why it is there, the radio's share of the
-time, the console, the buttons, the audio chips, the display's mode, the light sleep, the power log and how long its last line took to write), `powerlog`
+time, the sessions given up and the waits for the clock, what the WiFi stack said last, the console, the buttons, the audio chips, the display's mode, the light sleep, the power log and how long its last line took to write), `powerlog`
 (the power log as CSV; `powerlog clear` forgets it, see [The clock's own log](#the-clocks-own-log)), `config` (every
 setting, passwords hidden), `set name = value` (one
 setting, by the name and with the rules of the SD card file: checked, saved to flash, then a restart; `set name =`
@@ -1187,6 +1222,13 @@ October showed, is in [TESTING.md](TESTING.md).
   compiles. Never run on the board: the switch between the modes, the picture at 8 Hz, what it saves, the seconds
   against a reference. The register values and the switch are the datasheet's; what it saves is a guess, see
   [The display's low power mode](#the-displays-low-power-mode);
+* the radio's wait for the processor and the figures that say why sessions went wrong (new in 1.13): **all of it.**
+  The rules run on a PC against a model of the UI loop and the network task side by side (held up, slowed down or on
+  the way into a light sleep just as the radio asks), which also shows the rule of 1.12 starting the radio below 80 MHz,
+  and the reason numbers are checked against the SDK's when the sketch is compiled. Never run on the board: the wait
+  itself, the second *Radio* row, the power log's new columns, and whether the WiFi stack gives the reasons the clock
+  expects. Nor is it known yet whether the old 3 second wait was why the clock now and then missed its network: the
+  figures are there to tell ([TESTING.md](TESTING.md), item 40);
 * from earlier: the Spotify linking flow, the charging indicator, `PIN_CHARGE_STATUS`.
 
 ## Files
@@ -1205,8 +1247,8 @@ October showed, is in [TESTING.md](TESTING.md).
 | `weather.cpp`, `weather_codes.h` | Open-Meteo parsing, weather code to icon/text |
 | `sensors.cpp` | SHTC3, PCF85063 RTC and battery (no extra libraries); the power-down of the unused audio chips |
 | `power.*` | CPU clock, the low-battery deep sleep, the levels of the unused audio pins |
-| `radio_plan.h` | `wifi_mode = sync`: when the radio is on, what a missing network and a refusing one cost, what Spotify needs of it (pure logic, host-tested with a simulated day) |
-| `clock_policy.h`, `console_policy.h` | When the CPU clock is lowered (`cpu_idle_mhz`), and when the console is shut down (`console`) |
+| `radio_plan.h` | `wifi_mode = sync`: when the radio is on, what a missing network and a refusing one cost, what Spotify needs of it, the wait for the CPU clock before it comes on, the second *Radio* row (pure logic, host-tested with a simulated day) |
+| `clock_policy.h`, `console_policy.h` | When the CPU clock is lowered (`cpu_idle_mhz`) and when the radio may come on, and when the console is shut down (`console`) |
 | `light_sleep.h` | `light_sleep`: when the chip sleeps between the frames and for how long, the steps of one sleep, the time of day after it, the *Sleep* row (pure logic, host-tested; the SDK calls are in `power.cpp`) |
 | `log.h`, `log.cpp` | The serial log, and shutting the console and the USB port down |
 | `button_edges.*` | The buttons by interrupt, used with an idle clock or light sleep (and the buttons as the way out of a light sleep) |
@@ -1259,13 +1301,16 @@ build the sketch.
   clock and console policies, the frame planner across clock changes, and the light sleep: how long the planner may be
   left alone (probed at every turn of a simulated loop), when to sleep, the steps of one sleep against a stand-in for
   the chip, the time of day over a simulated day, and the whole loop over hours with and without it (and with the
-  timing of `display_power = low`). A fourth program (`test_builddefaults`) is built four ways, with `override_*.h` standing in for a
+  timing of `display_power = low`); and the radio's wait for the CPU clock: the UI loop and the network task side by
+  side, the loop held up, lowering the clock or on its way into a light sleep just as the radio asks, where the rule of
+  1.12 starts the radio below 80 MHz, under a clock change or with the chip asleep and the new one never does, the same
+  over many simulated hours, and the second *Radio* row at every width it can take. A fourth program (`test_builddefaults`) is built four ways, with `override_*.h` standing in for a
   `secrets.h`: nothing set (the factory build must equal the settings' own defaults), everything set (the result must
   equal the SD file `all_settings.h`, setting by setting, so a setting without a build-time default is named), mistakes
   (refused and reported) and values on the limits; it also checks that each macro is documented here and in
   `secrets.example.h`, and that the version in `config.h` is the one this README gives. While they were written, the tests were checked by breaking the code in 50 ways and watching
   them fail (and the build defaults in 70 more, the power logic in 80, the button and settings code that came with it
-  in 23, the banner about a card's settings in 17, the battery rules of 1.5 in 19, the power log in 113). Set
+  in 23, the banner about a card's settings in 17, the battery rules of 1.5 in 19, the power log in 113, the radio's wait for the clock of 1.13 in 30). Set
   `ARDUINOJSON_SRC` to ArduinoJson's `src` folder if it is not in `~/Arduino/libraries`.
 * **`tools/tests/battery_sim.cpp`** simulates whole battery discharges to choose the constants of `battery_est.h` (see
   the file header: `g++ -std=c++17 -O2 -I../.. battery_sim.cpp`).
@@ -1283,6 +1328,28 @@ build the sketch.
 `APP_VERSION` in `config.h`. It is not semver: the number goes up by hand with each batch of changes that is handed
 over to run on a board. The *System info* page shows it together with a build id, which tells two builds of one version
 apart (*Which build is running?* under [Updating the firmware from the SD card](#updating-the-firmware-from-the-sd-card)).
+
+**1.13** (21 November 2026)
+
+* **The radio waits for the processor.** With `cpu_idle_mhz` the processor runs at 20 or 40 MHz between sessions, and
+  WiFi works from 80 MHz up. Up to 1.12 the radio waited at most 3 seconds for the clock to come up and then came on
+  regardless, and nothing kept the processor from being slowed down again, or put into a light sleep, in the very
+  moment the radio was starting. A radio that runs below 80 MHz would hear nothing, and a scan that hears nothing says
+  "no such network": the session ends as *No known WiFi in range*, and the next look, two minutes later, finds the
+  network. The radio now comes on only once the UI loop has said that the clock is up and stays up; when it has not said
+  so within 5 seconds, the session is put off for 10 seconds and counted. Whether this is what made the clock miss its
+  network now and then is a guess: the longest the loop has been seen held up is 3.7 seconds, longer than the old 3.
+  See [WiFi sync mode](#wifi-sync-mode).
+* **The evidence, on the clock.** The *Power and settings* page has a second *Radio* row once a session has gone wrong,
+  `2 failed, 1 away, 1 put off, WiFi said 201`, and `power` in the serial console says the same with the waits for the
+  clock. The power log has six more columns, `radio_failed`, `radio_away`, `clock_waits`, `clock_wait_ms`,
+  `clock_put_off` and `wifi_reason` (the sheet too). The first line that 1.13 writes starts a new file under the new
+  heading: the lines before it are kept under the old one, but a second, older file, which a log has once it passed half
+  a megabyte, is deleted then. Copy the log to a card first if it matters.
+* With `cpu_mhz` above 80 and `cpu_idle_mhz = 80` the radio no longer starts at 80 MHz with the clock going up to
+  `cpu_mhz` under it: it waits until the clock is where it stays. The time a session has to join now counts from when
+  the radio came on, and the wait for the clock is not counted as time on the air.
+* **Not yet tried on the board.**
 
 **1.12** (23 October 2026)
 

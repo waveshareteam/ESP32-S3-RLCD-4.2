@@ -46,6 +46,7 @@
 #include "moon.h"
 #include "net_task.h"
 #include "power.h"
+#include "radio_plan.h"
 #include "sdcard.h"
 #include "sensors.h"
 #include "spotify.h"
@@ -698,7 +699,11 @@ static void buildInfoPower(UiModel &m, const SharedState &s) {
     }
     add("Power", v);
   }
-  if (s.radioSync && g_cfg.wifi) {  // wifi_mode = sync: how much of the time the radio was on
+  // wifi_mode = sync: how much of the time the radio was on; and under it, once a session went wrong or the WiFi stack
+  // gave a reason, how many and what it said (put in at the end, when the page has room for it: see below)
+  char trouble[radioplan::kTroubleRow] = "";
+  int troubleAt = -1;
+  if (s.radioSync && g_cfg.wifi) {
     char in[16];
     formatIn(s.radioWakeInSec, in, sizeof in);
     if (s.radioAsleep && s.radioWakeInSec >= 0) {
@@ -707,7 +712,9 @@ static void buildInfoPower(UiModel &m, const SharedState &s) {
       snprintf(v, sizeof v, "on %.1f %% of the time, %u sessions", s.radioOnPermille / 10.0, (unsigned)s.radioSessions);
     }
     add("Radio", v);
+    if (radioplan::troubleRow(s.radioFailed, s.radioAway, s.clockPutOff, s.wifiReason, trouble)) troubleAt = n;
   }
+  const int spare = troubleAt >= 0 ? 1 : 0;  // (the rows that are left out on a full page leave a line for it)
   if (g_cfg.lightSleep) {  // light_sleep = on: how much of the time the chip slept, and what keeps it awake now
     char row[lightsleep::kRow];
     lightsleep::formatRow(s_sleepStats.permille(esp_timer_get_time()), s_sleepWhy, row);
@@ -769,7 +776,7 @@ static void buildInfoPower(UiModel &m, const SharedState &s) {
   add("Shutdown", v);
   // display_power = low: say so, and whether the panel is in it now.  (On a page with room for it and the three rows
   // below: on the fullest page, with the PSRAM warning and the log's two rows, it is the one left out.)
-  if (g_cfg.displayPower == DISPPOWER_LOW && n < UI_INFO_LINES - 3) {
+  if (g_cfg.displayPower == DISPPOWER_LOW && n < UI_INFO_LINES - 3 - spare) {
     add("Display", s_lcd && s_lcd->lowPower() ? "low power mode, 8 Hz refresh" : "low power mode chosen, not in it");
   }
 
@@ -792,13 +799,22 @@ static void buildInfoPower(UiModel &m, const SharedState &s) {
   cfgSummary(sum, sizeof sum);
   add("Config", sum);
   // (up to three of them, and fewer on a page that is nearly full: the last row is kept for the Units line)
-  for (int i = 0; i < cfgIssueCount() && i < 3 && n < UI_INFO_LINES - 1; i++) {
+  for (int i = 0; i < cfgIssueCount() && i < 3 && n < UI_INFO_LINES - 1 - spare; i++) {
     cfgIssueText(i, v, sizeof v);
     add("", v);
   }
   snprintf(v, sizeof v, "%s, %s, %s%s", g_cfg.imperial() ? "imperial" : "metric", g_cfg.time12h() ? "12 h" : "24 h",
            dateFormatName(g_cfg.dateFormat), g_cfg.showWeek ? ", weeks" : "");
   add("Units", v);
+  // the Radio row's second line, under it, if the page has a line left (on the fullest page, with the light sleep, the
+  // PSRAM warning, the console and the log's two rows, it has not: the power log has the same figures)
+  if (troubleAt >= 0 && n < UI_INFO_LINES) {
+    memmove(m.info[troubleAt + 1], m.info[troubleAt], (size_t)(n - troubleAt) * sizeof m.info[0]);
+    const int end = n;
+    n = troubleAt;
+    add("", trouble);
+    n = end + 1;
+  }
   m.infoCount = n;
 }
 
@@ -813,6 +829,12 @@ static void buildPowerLogReading(powerlog::Reading &r, uint32_t nowSec) {
     r.radioSync = g_state.radioSync && g_cfg.wifi;  // (as the Radio line: only with wifi_mode = sync)
     r.radioOnPermille = g_state.radioOnPermille;
     r.radioSessions = g_state.radioSessions;
+    r.radioFailed = g_state.radioFailed;
+    r.radioAway = g_state.radioAway;
+    r.clockWaits = g_state.clockWaits;
+    r.clockWaitMaxMs = g_state.clockWaitMaxMs;
+    r.clockPutOff = g_state.clockPutOff;
+    r.wifiReason = g_state.wifiReason;
   }
   r.version = APP_VERSION;
   r.buildId = fwBuildId();
@@ -1195,6 +1217,10 @@ static void serviceSerial() {
                       (unsigned)s.radioSessions, (int)s.radioWakeInSec,
                       s.radioTrouble == RADIO_AWAY ? " (none of the networks in range)" : (s.radioTrouble == RADIO_CANNOT_JOIN ? " (cannot join)" : ""),
                       (unsigned)s_planner.drawCostUs(), (unsigned)s_planner.sendCostUs());
+        Serial.printf("sessions given up %u, none in range %u; radio starts that waited for the clock %u (the longest %u ms), put off %u; "
+                      "the WiFi stack said last: %u %s\n",
+                      (unsigned)s.radioFailed, (unsigned)s.radioAway, (unsigned)s.clockWaits, (unsigned)s.clockWaitMaxMs,
+                      (unsigned)s.clockPutOff, (unsigned)s.wifiReason, radioplan::reasonText(s.wifiReason));
         Serial.printf("console %s%s; buttons %s; audio chips: %s\n",
                       g_cfg.console == CONSOLE_ON ? "on" : (g_cfg.console == CONSOLE_AUTO ? "auto" : "off"),
                       s_consoleKeep ? " (kept on for this run: KEY was held at start-up)" : "",
@@ -1365,24 +1391,33 @@ static void serviceConsole(uint32_t nowMs) {
   serviceSerial();
 }
 
-// cpu_idle_mhz: the clock follows what needs it (clock_policy.h).  Called every time round the loop.
+// cpu_idle_mhz: the clock follows what needs it (clock_policy.h).  Called every time round the loop, before the light
+// sleep is thought of.  It is also the loop's answer to the radio, which waits for it before it comes on (net_task.cpp,
+// startRadio()): the request's number is read first, so a request that comes in while the clock is being set is not
+// answered with the clock set without it; it is answered next time round.  Once answered, the radio keeps the clock
+// up (target()) and the chip awake (lightsleep::decide()) until it is off again.
 static void serviceClock(uint32_t nowMs, int32_t usec) {
   if (s_pokeUntilMs != 0 && (int32_t)(s_pokeUntilMs - nowMs) <= 0) s_pokeUntilMs = 0;  // over (a time long past must not come round again)
+  const uint32_t ask = netRadioClockAsk();
+  const bool radio = netRadioNeedsFastClock();
   const int idle = g_cfg.cpuIdleMhz();
-  if (idle == 0) return;  // no idle clock: the working clock stays (start-up has set it)
-  static uint32_t s_usbCheckMs = 0;
-  static bool s_usb = false;
-  if (s_usbCheckMs == 0 || nowMs - s_usbCheckMs >= 500) {
-    s_usbCheckMs = nowMs ? nowMs : 1;
-    s_usb = usbHostAttached();
+  int want = g_cfg.cpuMhz();  // no idle clock: the working clock stays (start-up has set it)
+  if (idle > 0) {
+    static uint32_t s_usbCheckMs = 0;
+    static bool s_usb = false;
+    if (s_usbCheckMs == 0 || nowMs - s_usbCheckMs >= 500) {
+      s_usbCheckMs = nowMs ? nowMs : 1;
+      s_usb = usbHostAttached();
+    }
+    clockpolicy::Needs needs;
+    needs.radio = radio;
+    needs.usbHost = s_usb;
+    needs.poked = s_pokeUntilMs != 0;
+    want = clockpolicy::target(needs, g_cfg.cpuMhz(), idle);
+    s_clockReason = want == idle ? "idle" : (needs.radio ? "radio on" : (needs.usbHost ? "USB attached" : "button"));
+    if (clockpolicy::mayChange((int)getCpuFrequencyMhz(), want, s_planner.quiet(usec))) applyClock(want);
   }
-  clockpolicy::Needs needs;
-  needs.radio = netRadioNeedsFastClock();
-  needs.usbHost = s_usb;
-  needs.poked = s_pokeUntilMs != 0;
-  const int want = clockpolicy::target(needs, g_cfg.cpuMhz(), idle);
-  s_clockReason = want == idle ? "idle" : (needs.radio ? "radio on" : (needs.usbHost ? "USB attached" : "button"));
-  if (clockpolicy::mayChange((int)getCpuFrequencyMhz(), want, s_planner.quiet(usec))) applyClock(want);
+  if (clockpolicy::radioMayStart(radio, (int)getCpuFrequencyMhz(), want, s_clockRefusedMhz)) netRadioClockAnswer(ask);
 }
 
 // Is slow work due (readSlowSensors(), servicePowerLog()), and when can it run: 0 = now, lightsleep::kNever = none is due.

@@ -20,10 +20,20 @@
 // for 45 seconds; one press buys one attempt.  Any button press makes a clock that found no
 // network look again at once.
 //
+// Before the radio comes on the CPU clock has to be up (WiFi works from 80 MHz), and the clock is
+// the UI loop's: the network task asks and waits for the loop to answer (ClockWait).  A radio that
+// came on below 80 MHz would hear nothing, and a scan that hears nothing says "no such network",
+// so this is not left to chance: when the answer does not come, the session is put off for a few
+// seconds (Planner::postpone()) rather than started at the wrong clock.
+//
 // Pure logic with no Arduino dependency: the times are passed in, tools/tests drives it with a
 // simulated day.
 
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "clock_policy.h"
 
 namespace radioplan {
 
@@ -51,6 +61,14 @@ const int kAwayScansAgain = 1;
 // An answer that comes sooner than this after an attempt began belongs to the attempt before it: a scan of
 // every channel takes well over a second.
 const uint32_t kMinScanMs = 700;
+
+// The wait for the CPU clock before the radio comes on (ClockWait).  The UI loop answers once a time round, after
+// it has set the clock: within one pass of the loop, which is a frame (120 ms at 20 MHz), a line of the power log
+// (a few tenths of a second) or a light sleep (2 s at the most).  The longest pass seen on the board held a
+// frame up by 3.7 s (TESTING.md, 16), longer than the 3 s the radio used to wait before it came on regardless.
+const uint32_t kClockWaitMs = 5000;
+// ... and when the answer has not come by then, the session is put off for this long and asks again.
+const uint32_t kClockHoldMs = 10000;
 
 // A time still to come, kept as millis(): 0 means "none".  A time that has passed must be put back to 0 (or
 // kept fresh with keepDue()), because 32 bits of milliseconds wrap: one that lies more than 24.8 days back
@@ -153,6 +171,45 @@ class Search {
   int need_ = kAwayScansFirst;
 };
 
+// The network task's wait for the CPU clock, each time the radio is to come on (net_task.cpp, startRadio()): it has
+// asked the UI loop for the fast clock and looks every 10 ms whether the loop has answered.  It goes on the answer,
+// and only at 80 MHz or more; it gives up after kClockWaitMs (the session is put off) or when the clock is on its
+// way into the deep sleep of the shutdown (no radio then at all).  It also keeps the figures for the Power and
+// settings page and the power log: how often the clock had to come up first, the longest any start waited, and
+// how many starts were put off.
+class ClockWait {
+ public:
+  enum Step : uint8_t { WAIT, GO, PUT_OFF, STOP };
+
+  // The radio is wanted; `mhz` is the CPU clock at that moment.
+  void begin(uint32_t nowMs, int mhz) {
+    startMs_ = nowMs;
+    low_ = mhz < clockpolicy::kRadioMinMhz;
+  }
+  // `answered`: the UI loop has answered this request (clockpolicy::radioMayStart()); `mhz`: the clock now; `stop`:
+  // the clock is shutting down.
+  Step step(uint32_t nowMs, bool answered, int mhz, bool stop) {
+    if (stop) return STOP;
+    const uint32_t waited = nowMs - startMs_;
+    const bool up = answered && mhz >= clockpolicy::kRadioMinMhz;
+    if (!up && waited < kClockWaitMs) return WAIT;
+    if (low_ && waits_ < UINT32_MAX) waits_++;
+    if (waited > longestMs_) longestMs_ = waited;
+    if (up) return GO;
+    if (putOff_ < UINT32_MAX) putOff_++;
+    return PUT_OFF;
+  }
+
+  uint32_t waits() const { return waits_; }          // starts that found the clock below 80 MHz
+  uint32_t longestMs() const { return longestMs_; }  // the longest any start waited for the answer
+  uint32_t putOff() const { return putOff_; }        // starts that did not get it in time
+
+ private:
+  uint32_t startMs_ = 0;
+  bool low_ = false;
+  uint32_t waits_ = 0, longestMs_ = 0, putOff_ = 0;
+};
+
 class Planner {
  public:
   enum State : uint8_t { OFF, CONNECTING, ONLINE };
@@ -180,7 +237,8 @@ class Planner {
     switch (state_) {
       case OFF:
         if (retryAtMs_ != 0 && due(nowMs, retryAtMs_)) retryAtMs_ = 0;  // the wait is over (and a time long past must not come round again)
-        if (wants && (retryAtMs_ == 0 || demand)) {                      // (a key press does not wait)
+        if (holdUntilMs_ != 0 && due(nowMs, holdUntilMs_)) holdUntilMs_ = 0;
+        if (wants && holdUntilMs_ == 0 && (retryAtMs_ == 0 || demand)) {  // (a key press does not wait for the back-off)
           state_ = CONNECTING;
           sessionStartMs_ = nowMs;
           askedFor_ = demand || nudged_;
@@ -228,6 +286,26 @@ class Planner {
     nudged_ = true;
   }
 
+  // The radio came on, at `nowMs`, for the session that update() began: a moment after it was wanted, because the
+  // CPU clock comes up first (ClockWait).  The time the session has to join counts from here, and the wait was no
+  // time on the air.
+  void radioOn(uint32_t nowMs) {
+    if (!sync_ || state_ != CONNECTING) return;
+    sessionStartMs_ = nowMs;
+    lastTickMs_ = nowMs;
+  }
+
+  // The radio could not come on for the session that update() began (the CPU clock was not up in time, see
+  // ClockWait): the session is put off for `waitMs`, as if it had not begun.  It ends with no outcome, nothing is
+  // held against the network, a key press keeps its attempt, and the session starts once the wait is over if it
+  // is still wanted.  A key press waits too, this time: what is not ready is the clock, not the network.
+  void postpone(uint32_t nowMs, uint32_t waitMs) {
+    if (!sync_ || state_ != CONNECTING) return;
+    state_ = OFF;
+    holdUntilMs_ = (nowMs + waitMs) | 1u;
+    nudged_ = askedFor_;  // (a look someone asked for stays one)
+  }
+
   State state() const { return state_; }
   bool radioWanted() const { return state_ != OFF; }
 
@@ -240,9 +318,13 @@ class Planner {
   Outcome lastOutcome() const { return outcome_; }
   // When the next session may start although something is due (0 = now); only means something while OFF.
   uint32_t retryAtMs() const { return retryAtMs_; }
+  // Until when a session that was put off waits (postpone(); 0 = none), a key press included.
+  uint32_t holdUntilMs() const { return holdUntilMs_; }
   int failures() const { return failures_; }    // failed sessions in a row
   int awayLooks() const { return awayLooks_; }  // looks in a row that found none of the networks
-  uint32_t sessions() const { return sessions_; }
+  uint32_t sessions() const { return sessions_; }  // sessions that did what they came for
+  uint32_t failedSessions() const { return failedTotal_; }  // since the start: sessions that ended FAILED ...
+  uint32_t awaySessions() const { return awayTotal_; }      // ... and AWAY
 
   // Milliseconds the radio was on (CONNECTING and ONLINE) up to `nowMs`.
   uint32_t radioOnMs(uint32_t nowMs) {
@@ -257,9 +339,11 @@ class Planner {
       // a look someone asked for (a button) is extra: it does not use up one of the quick looks
       if (awayLooks_ == 0 || (!askedFor_ && awayLooks_ < 1000)) awayLooks_++;
       wait = awayAfterMs(awayLooks_);
+      if (awayTotal_ < UINT32_MAX) awayTotal_++;
     } else {
       if (failures_ < 1000) failures_++;
       wait = retryAfterMs(failures_);
+      if (failedTotal_ < UINT32_MAX) failedTotal_++;
     }
     retryAtMs_ = nowMs + wait;
     if (retryAtMs_ == 0) retryAtMs_ = 1;
@@ -279,15 +363,83 @@ class Planner {
   State state_ = OFF;
   Outcome outcome_ = NONE;
   uint32_t sessionStartMs_ = 0, onlineSinceMs_ = 0, lastActiveMs_ = 0;
-  uint32_t retryAtMs_ = 0;
+  uint32_t retryAtMs_ = 0, holdUntilMs_ = 0;
   uint32_t spentSeq_ = 0;
   bool nudged_ = false, askedFor_ = false;
   bool gaveUp_ = false;
   int failures_ = 0;
   int awayLooks_ = 0;
-  uint32_t sessions_ = 0;
+  uint32_t sessions_ = 0, failedTotal_ = 0, awayTotal_ = 0;
   uint32_t onMs_ = 0, lastTickMs_ = 0;
   bool started_ = false;
 };
+
+// ---------------------------------------------------------------------------
+// What went wrong, for the Power and settings page and the serial console
+// ---------------------------------------------------------------------------
+// The disconnect reasons of the WiFi stack that the clock says something about: ESP-IDF's wifi_err_reason_t
+// (net_task.cpp checks these numbers against the SDK's own when it is built for the board).
+const uint8_t kReasonAuthExpire = 2;          // the router dropped the authentication (often: a wrong password)
+const uint8_t kReasonAssocLeave = 8;          // the clock left: its own doing, not counted
+const uint8_t kReason4WayTimeout = 15;        // the key exchange did not finish (a wrong password, usually)
+const uint8_t kReasonBeaconTimeout = 200;     // the router's beacons stopped coming
+const uint8_t kReasonNoApFound = 201;         // a scan of every channel found no network by that name
+const uint8_t kReasonAuthFail = 202;
+const uint8_t kReasonAssocFail = 203;
+const uint8_t kReasonHandshakeTimeout = 204;
+const uint8_t kReasonConnectionFail = 205;
+const uint8_t kReasonNoApSecurity = 210;      // the name was found, but not with a kind of security the clock takes
+
+// A few words for a reason, for the serial console; "" for one the clock has no words for (the number is given anyway).
+inline const char *reasonText(uint8_t reason) {
+  switch (reason) {
+    case 0: return "none yet";
+    case kReasonAuthExpire: return "authentication expired";
+    case kReasonAssocLeave: return "left";
+    case kReason4WayTimeout: return "key exchange timed out";
+    case kReasonBeaconTimeout: return "beacons lost";
+    case kReasonNoApFound: return "no such network";
+    case kReasonAuthFail: return "authentication failed";
+    case kReasonAssocFail: return "association failed";
+    case kReasonHandshakeTimeout: return "handshake timed out";
+    case kReasonConnectionFail: return "connection failed";
+    case kReasonNoApSecurity: return "no network with that security";
+    default: return "";
+  }
+}
+
+const size_t kTroubleRow = 43;  // an info page shows 42 characters of a value
+
+// The second Radio row of the Power and settings page: how many sessions were given up and how many found no
+// network, how many were put off for the clock (only when any were), and what the WiFi stack said last:
+// "2 failed, 1 away, 1 put off, WiFi said 201".  False (and "") when there is nothing to say, so that a clock where
+// all is well has no such row.  The row always fits: a count over 9999 is given as "9999+", and a text that would
+// still be too long says less ("WiFi" for "WiFi said", then no reason at all) rather than being cut off in the middle
+// of a number.
+inline bool troubleRow(uint32_t failed, uint32_t away, uint32_t putOff, uint8_t reason, char out[kTroubleRow]) {
+  out[0] = 0;
+  if (failed == 0 && away == 0 && putOff == 0 && reason == 0) return false;
+  auto count = [](uint32_t v, char *buf, size_t cap) {
+    if (v > 9999) snprintf(buf, cap, "9999+");
+    else snprintf(buf, cap, "%u", (unsigned)v);
+  };
+  char f[8], a[8], p[8];
+  count(failed, f, sizeof f);
+  count(away, a, sizeof a);
+  count(putOff, p, sizeof p);
+  char off[24] = "";
+  if (putOff > 0) snprintf(off, sizeof off, ", %s put off", p);
+  for (int form = 0; form < 3; form++) {
+    char why[24] = "";
+    if (reason != 0 && form < 2) snprintf(why, sizeof why, form == 0 ? ", WiFi said %u" : ", WiFi %u", (unsigned)reason);
+    char row[96];
+    const int n = snprintf(row, sizeof row, "%s failed, %s away%s%s", f, a, off, why);
+    if (n > 0 && (size_t)n < kTroubleRow) {
+      memcpy(out, row, (size_t)n + 1);
+      return true;
+    }
+  }
+  return false;  // (not reached: the shortest form is 40 characters at the most)
+}
 
 }  // namespace radioplan

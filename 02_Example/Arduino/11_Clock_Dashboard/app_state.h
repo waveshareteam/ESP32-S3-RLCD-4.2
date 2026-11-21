@@ -36,7 +36,15 @@ struct SharedState {
   uint8_t radioTrouble = 0;         // how the last session ended if not well: RADIO_FINE, RADIO_AWAY, RADIO_CANNOT_JOIN
   int32_t radioWakeInSec = -1;      // seconds until the next session by the clock, -1 = not known
   uint16_t radioOnPermille = 0;     // the share of the time since start that the radio was on, in thousandths
-  uint32_t radioSessions = 0;
+  uint32_t radioSessions = 0;       // sessions that did what they came for
+
+  // --- why sessions went wrong, since the start (the Power and settings page, the power log) -------------
+  uint32_t radioFailed = 0;     // sessions given up (wifi_mode = sync): the network would not let the clock in in time
+  uint32_t radioAway = 0;       // sessions that found none of the clock's networks
+  uint32_t clockWaits = 0;      // radio starts that found the CPU clock below 80 MHz and waited for it
+  uint32_t clockWaitMaxMs = 0;  // the longest any radio start waited for the clock
+  uint32_t clockPutOff = 0;     // radio starts put off because the clock did not come up in time
+  uint8_t wifiReason = 0;       // the last disconnect reason the WiFi stack gave (0 = none yet; the clock's own leaving aside)
 
   // --- clock accuracy (drift.h) ----------------------------------------------
   bool driftKnown = false;   // a figure exists: measured now, or kept in flash from an earlier run

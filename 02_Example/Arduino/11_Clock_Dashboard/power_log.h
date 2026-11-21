@@ -75,6 +75,12 @@ enum Column : uint8_t {
   C_CLOCK_SHOWN,
   C_RADIO_ON_PCT,
   C_RADIO_SESSIONS,
+  C_RADIO_FAILED,  // why sessions went wrong, since the start (1.13)
+  C_RADIO_AWAY,
+  C_CLOCK_WAITS,
+  C_CLOCK_WAIT_MS,
+  C_CLOCK_PUT_OFF,
+  C_WIFI_REASON,
   C_ASLEEP_PCT,
   C_BATTERY_V,
   C_BATTERY_PCT,
@@ -97,7 +103,8 @@ inline const char *columnName(int c) {
       "test",           "firmware",     "wifi",        "wifi_mode",  "wifi_power_save", "cpu_idle_mhz",
       "spotify_live",   "console",      "light_sleep", "display_power", "battery_capacity_mah",     "card",
       "music",          "date",         "time",        "uptime",     "clock_shown",     "radio_on_pct",
-      "radio_sessions", "asleep_pct",   "battery_v",   "battery_pct", "battery_state",  "left",
+      "radio_sessions", "radio_failed", "radio_away",  "clock_waits", "clock_wait_ms", "clock_put_off",
+      "wifi_reason",    "asleep_pct",   "battery_v",   "battery_pct", "battery_state",  "left",
       "pct_per_hour",   "over_min",     "clock_ma",    "meter_ma",   "free_kb",         "frames_sent",
       "frames_late",    "frames_worst_ms", "notes"};
   static_assert(sizeof names / sizeof names[0] == kColumnCount, "one name for each column");
@@ -118,9 +125,12 @@ struct Reading {
   int cpuMhz = 0;                // the CPU clock right now ...
   const char *clockReason = "";  // ... and why it is there ("idle", "radio on", ...); "" when no idle clock is set
 
-  bool radioSync = false;  // wifi_mode = sync with the radio in use: the two figures below mean something
+  bool radioSync = false;  // wifi_mode = sync with the radio in use: the figures below mean something
   uint16_t radioOnPermille = 0;
   uint32_t radioSessions = 0;
+  uint32_t radioFailed = 0, radioAway = 0;                       // sessions given up, sessions that found no network
+  uint32_t clockWaits = 0, clockWaitMaxMs = 0, clockPutOff = 0;  // radio starts and the CPU clock (radio_plan.h, ClockWait)
+  uint8_t wifiReason = 0;  // the WiFi stack's last disconnect reason, in either wifi_mode (0 = none yet: left empty)
 
   uint16_t asleepPermille = 0;  // light_sleep = on: the share of the time asleep (light_sleep.h), in tenths of a percent
 
@@ -233,7 +243,13 @@ inline size_t formatLine(const Reading &r, char *out, size_t cap) {
   if (r.radioSync) {
     snprintf(f[C_RADIO_ON_PCT], kField, "%.1f", r.radioOnPermille / 10.0);
     snprintf(f[C_RADIO_SESSIONS], kField, "%u", (unsigned)r.radioSessions);
+    snprintf(f[C_RADIO_FAILED], kField, "%u", (unsigned)r.radioFailed);
+    snprintf(f[C_RADIO_AWAY], kField, "%u", (unsigned)r.radioAway);
+    snprintf(f[C_CLOCK_WAITS], kField, "%u", (unsigned)r.clockWaits);
+    snprintf(f[C_CLOCK_WAIT_MS], kField, "%u", (unsigned)r.clockWaitMaxMs);
+    snprintf(f[C_CLOCK_PUT_OFF], kField, "%u", (unsigned)r.clockPutOff);
   }
+  if (r.wifiReason != 0) snprintf(f[C_WIFI_REASON], kField, "%u", (unsigned)r.wifiReason);
   if (r.settings && r.settings->lightSleep) {  // (as the Sleep line: only with light sleep on)
     const unsigned p = r.asleepPermille > 1000 ? 1000 : r.asleepPermille;
     snprintf(f[C_ASLEEP_PCT], kField, "%u.%u", p / 10, p % 10);

@@ -141,3 +141,22 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
     * KEY: the screen comes back at the usual rate for its eight seconds, and the clock that starts (after charging,
       or with KEY held for three seconds) looks as before.
     * If there is a meter in the battery's lead: the sleeping current, with this and (`sleeptest` on 1.11) without it.
+
+## The radio waits for the processor (1.13)
+
+40. **Not yet.** Why the clock now and then does not get onto its WiFi and comes good by itself a few minutes later
+    (with the settings of 24). 1.13 no longer lets the radio come on below 80 MHz, and counts what goes wrong. Run it
+    for a few days with `power_log = on`, and look at the second *Radio* row of *Power and settings* now and then (it is
+    only there once something went wrong), or at `power` in the serial console.
+    * Does the clock still miss its network? If it does, the row says which way: *failed* (the network would not let it
+      in within 25 seconds) or *away* (none of its networks answered), and what the WiFi stack said last (`201`: not
+      found; `15` or `2`: turned away). The README's [WiFi sync mode](README.md#wifi-sync-mode) has the numbers.
+    * *put off* above 0, or `clock_wait_ms` in the log at 3000 or more: the processor was not up in time when the
+      radio was wanted. Up to 1.12 the radio came on below 80 MHz then, so that would be the cause found. Note the time
+      (the log's line), and whether the *Frames* line had a late frame then.
+    * `clock_wait_ms` in the log is the longest wait so far. A tenth of a second or so is a frame at 20 MHz, up to a
+      second with light sleep on (the chip finishes its nap first); more means the UI loop was held up just then.
+    * *away* going up while the router was on and near, with `201`: the scans did not hear it, for some other reason.
+      Worth trying `wifi_power_save = normal` for a run to see if it makes a difference (the power saving should not
+      touch a scan, by Espressif's description, but that has not been seen either way).
+    * Nothing else should look different: the sessions, the *Radio* share and the battery run as in 24.
