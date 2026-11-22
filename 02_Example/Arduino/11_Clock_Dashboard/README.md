@@ -636,6 +636,8 @@ measurement): an 18650 of 2500 mAh lasts about two days, a 1000 mAh pouch about 
 below (`wifi_mode = sync`, `cpu_idle_mhz = 20`, `wifi_power_save = max`, `spotify_live = off`, `console = auto`): a
 3400 mAh 18650 ran **81 hours** from a full charge to the shutdown at 3.30 V, about 40 mA on average, which is more than
 the 21 mA measured on USB at 5 V with the same settings would make (about 28 mA from the cell); why is not known.
+With `light_sleep = on` and `display_power = low` as well (firmware 1.11), the same cell ran **142 hours**, about
+24 mA on average: see [Light sleep](#light-sleep).
 **`wifi = off`** removes the
 radio's share (and with it the weather, Spotify and network time); it should lower the current further, but by how much
 has not been measured.
@@ -655,8 +657,9 @@ Six settings go further than `wifi_power_save`: **`wifi_mode = sync`** keeps the
 off and the processor is awake, **`console = auto`** (or `off`) shuts the USB serial console down, **`light_sleep`**
 puts the processor to sleep between the frames, and **`display_power = low`** has the display refreshed 2 times a second instead of 25.5 (`display_low_hz`). All six
 are **off by default**. The first four have run on the board for days since 7 October 2026, and the owner has measured
-the current with them (see [Light sleep](#light-sleep)); `light_sleep` and `display_power` (both 1.11) have not run
-on a board yet. Otherwise what follows is what the code does and what a PC simulation of its rules
+the current with them (see [Light sleep](#light-sleep)); `light_sleep` and `display_power` (both 1.11) ran on the
+owner's board together from 14 to 22 November 2026, 142 hours on the battery against 81 without them (see
+[Light sleep](#light-sleep)), but what each saves on its own has not been measured. Otherwise what follows is what the code does and what a PC simulation of its rules
 says, not a measurement. If you have a USB power meter, the figures this section lacks are exactly the ones worth sending back, and
 without one the clock's own runtime estimate will do: see [Logging a battery run](#logging-a-battery-run).
 [What is switched off](#what-is-switched-off) lists every part of the board and what the clock does about it.
@@ -861,7 +864,8 @@ schedule has not run on the board either; see [Keeping the seconds on time](#kee
 `display_power = low` the draw is over before the tick, and the battery and the sensors, when they are due, are read
 straight after it; they used to wait for the tick, in a sleep and a wake of their own every 5 seconds, which made 1.18
 sleeps a second in the simulation where it is now 1.00. Not run on the board either.) The chip keeps its memory and
-the display its picture. **It is new in 1.11, off by default and has not run on a board yet.**
+the display its picture. **It is new in 1.11 and off by default. 1.11's light sleep has run on the owner's board
+for days (see *Measured* below); the changes of 1.14 have not.**
 The Arduino core has no automatic light sleep (`CONFIG_PM_ENABLE` is not set in core 3.3.8), so the clock asks for each
 sleep itself (`light_sleep.h`, `power.cpp`).
 
@@ -938,11 +942,21 @@ at 5 V, where the datasheet's straight line says 10, which would mean the chip a
 light sleep saves more, about 7 mA at 5 V (14 mA left). **Somewhere between 14 and 16 mA, then, from 21**: what is left
 is the rest of the board (the display, the converters and the charger: some 12 to 14 mA) and the 2 mA or so of the
 chip itself.
-On the 3400 mAh cell that turns some five days into **about a week (6.5 to 7.5 days), short of eight**; nobody knows
-until it is measured. With light sleep the idle clock is no longer used: in the model 80 MHz throughout comes out
+On the 3400 mAh cell that would have turned the five days the USB reading suggested into about a week (6.5 to 7.5
+days); on the battery it took the clock from 3.4 days to 5.9 (*Measured*, below). With light sleep the idle clock is no longer used: in the model 80 MHz throughout comes out
 better than 40 or 20 between the presses (a frame is over sooner), about a third of a milliamp less at 3.3 V than 20 MHz
 by the datasheet's figures, and more if the chip at 20 MHz draws more than those, as the owner's readings suggest; it
 also answers buttons sooner. Not measured.
+
+**Measured** (firmware 1.11 on the owner's board, with `display_power = low`, then at 8 Hz, and `wifi_mode = sync`,
+`cpu_idle_mhz = 20`, `spotify_live = off`, `console = auto`):
+the 3400 mAh cell lasted **142 hours (5.9 days), against 81 without light sleep**, from the start on 14 November
+2026 to the shutdown at 3.30 V on the 20th. That is about 24 mA from the cell on average, against about 40. It is
+more than the estimate above expected, and why is not known: either light sleep saves more than the datasheet's
+figures say, or the extra current the clock draws on the battery (see [Power](#power)) goes down with it. A meter on
+USB with light sleep would tell the two apart; nobody has taken that reading yet. The log had the chip asleep 70 % of
+the time (the *Sleep* row), at the idle clock of 20 MHz, and 30 late frames in the 5.9 days, the worst 1.5 s late
+(TESTING.md, item 37). None of 1.14's changes were in that run.
 
 **Keeping time.** While the chip sleeps its timer stands still, and the SDK puts it forward on waking by what the RTC's
 slow clock counted. On this board that is an RC oscillator inside the chip (there is no 32 kHz crystal), which the SDK
@@ -977,8 +991,9 @@ and the clock against a phone in the morning), and the shutdown still waking by 
 `display_power = low` (`#define DISPLAY_POWER "low"`) switches the display's controller, a Sitronix ST7305, from its
 high power mode to its **low power mode**: it refreshes the panel 2 times a second instead of 25.5, or 1, 4 or 8 times
 as `display_low_hz` says (since 1.14; `#define DISPLAY_LOW_HZ`), and 8 times a second for the seconds after a button
-press (8 all the time up to 1.13). **It is new in 1.11, off by default and has not run on a board yet at any rate, and
-what it saves has not been measured.**
+press (8 all the time up to 1.13). **It is new in 1.11 and off by default. At 1.11's 8 Hz it has run on the owner's
+board for days, together with light sleep (see [Light sleep](#light-sleep)); what it saves on its own has not been
+measured, and the rates of 1.14 have not been tried as the clock.**
 
 **What the datasheet says** (ST7305 version 0.2, April 2021,
 [a copy at Waveshare](https://files.waveshare.com/wiki/common/ST_7305_V0_2.pdf)):
@@ -1296,8 +1311,8 @@ minutes wake it), `reboot`.
 ## Not yet tried on the board
 
 Written and tested on a PC (and compiled), never run on the real board, with what the board's owner has seen there
-since (7 October 2026) noted item by item. The same as a checklist, with what the clock's own power log of 8 to 17
-October showed, is in [TESTING.md](TESTING.md).
+since (7 October 2026) noted item by item. The same as a checklist, with what the clock's own power logs of 8 to 17
+October and 14 to 22 November showed, is in [TESTING.md](TESTING.md).
 
 * writing to the SD card (the example settings file, the rename of an installed firmware file), and the look at a
   refused card's first sector that names the reason. Seen on the board: a card with a GUID partition table was turned
@@ -1363,18 +1378,19 @@ October showed, is in [TESTING.md](TESTING.md).
   started. What a line costs is an estimate from a datasheet, see [The clock's own log](#the-clocks-own-log). **The
   first thing to look at** is the *Log* row of the *Power and settings* page a minute after a start with the log on:
   it should say `1 KB, 1 line this run, 50 s ago`, and `power` in the serial console how long that line took to write;
-* the light sleep (`light_sleep = on`, new in 1.11): **all of it.** When to sleep and for how long, the steps of one
+* the light sleep (`light_sleep = on`, new in 1.11): **most of it.** When to sleep and for how long, the steps of one
   sleep (against a stand-in for the chip), the time of day after it and a model of the loop over hours (frames, slow
-  work, the power log, presses, radio sessions, stalls) run on a PC, and the sketch compiles. Never run on the board:
-  the SDK's light sleep itself and what the chip draws in it, KEY and BOOT waking it, the button interrupts being held
-  off and put back around every sleep, how far the RC clock takes the time while the chip sleeps, and the shutdown's
-  deep sleep after a run with light sleep (the sleep's ways out are switched off after each one). What it saves is an
-  estimate from the datasheet and the owner's readings, see [Light sleep](#light-sleep);
-* the display's low power mode (`display_power = low`, new in 1.11): **all of it.** The timing of the frames for the
+  work, the power log, presses, radio sessions, stalls) run on a PC, and the sketch compiles. 1.11's light sleep ran
+  on the owner's board from 14 to 22 November 2026, through a run down on the battery to the shutdown's deep sleep and
+  a start again from it on the charger (142 hours against 81 without it, the chip asleep 70 % of the time). Not seen
+  yet: what the chip draws in it, KEY and BOOT waking it and the button interrupts around every sleep (nothing was
+  reported against them), how far the RC clock takes the time while the chip sleeps, and all of 1.14's changes to it.
+  See [Light sleep](#light-sleep);
+* the display's low power mode (`display_power = low`, new in 1.11): **most of it.** The timing of the frames for the
   slower refresh runs on a PC against a model of the panel's refresh, and in the light-sleep loop above, and the sketch
-  compiles. Never run on the board: the switch between the modes, the picture at any of its rates (1, 2, 4 and 8 Hz, a
-  setting since 1.14, `display_low_hz`), the change to 8 Hz after a press and back, what each rate saves, the seconds
-  against a reference. The register values and the switch are the datasheet's;
+  compiles. 1.11's switch to the low power mode and its 8 Hz ran on the owner's board for days (with light sleep, as
+  above). Not seen yet: the picture at the other rates (1, 2 and 4 Hz, a setting since 1.14, `display_low_hz`), the
+  change to 8 Hz after a press and back, what each rate saves, the seconds against a reference. The register values and the switch are the datasheet's;
   when a change of the rate takes effect is not in it; what it saves is a guess, see
   [The display's low power mode](#the-displays-low-power-mode);
 * the radio's wait for the processor and the figures that say why sessions went wrong (new in 1.13): **all of it.**
@@ -1505,10 +1521,12 @@ apart (*Which build is running?* under [Updating the firmware from the SD card](
 * What it should save, by a model on a PC (the UI loop of `tools/tests/test_radio.cpp` over a day of sync sessions,
   with a current for each state from the datasheet, fitted to the owner's readings and to the run down to the
   shutdown; model currents, not measurements): with the owner's settings plus light sleep and `display_power = low`
-  the clock draws 29.08 mA from the cell, against 31.08 with 1.13: 117 hours on the 3400 mAh cell instead of 109. The
-  chip is asleep 93 % of the time instead of 76, the radio on 1.69 % instead of 1.94, and the display's part is
-  1.16 mA instead of 1.63 by the model's straight line. No frame is late in it. With `display_low_hz = 1` it would be
-  about 0.08 mA less. With light sleep off almost nothing changes (41.7 mA, the 81 hours of the run down).
+  the clock draws about 2 mA less from the cell than with 1.13 (29.08 against 31.08 mA in the model). The chip is
+  asleep 93 % of the time instead of 76, the radio on 1.69 % instead of 1.94, and the display's part is 1.16 mA
+  instead of 1.63 by the model's straight line. No frame is late in it. With `display_low_hz = 1` it would be about
+  0.08 mA less. With light sleep off almost nothing changes. The model's totals are too high with light sleep on: it
+  gives 1.13 109 hours on the 3400 mAh cell, where 1.11 with these settings ran 142 on the owner's board (see
+  [Light sleep](#light-sleep)), so only the difference means anything, and that is a model's as well.
 * With light sleep the radio finds the processor up when it is wanted, and waits only for the UI loop to say so.
 * **Not yet tried on the board.**
 

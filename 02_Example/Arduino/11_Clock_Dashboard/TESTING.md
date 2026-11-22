@@ -6,6 +6,8 @@ What has been written and tested on a PC but still has to be seen on the real bo
 Each item has a status: **seen** (it works on the board), **partly** (some of it seen), **not yet**, or **problem**
 (seen, and wrong). "The log" means the clock's own power log (`power_log = on`) of 8 to 17 October 2026: firmware 1.7
 to 1.9 with `wifi_mode = sync`, `wifi_power_save = max`, `cpu_idle_mhz = 20`, `spotify_live = off`, `console = auto`.
+"The November log" is its log of 14 to 22 November 2026: firmware 1.11 with those settings and `light_sleep = on`,
+`display_power = low` (the copy starts three days in).
 
 Seen before this list was made: a card with a GUID partition table refused and a FAT32 card mounted; settings from the
 card applied and kept in flash; firmware installed from the card; the processor at 20 MHz with the pages still drawn;
@@ -46,14 +48,19 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
     charge to 3.30 V, a line every ten minutes to the last (3.307 V). It gave the battery curve of 1.10. **Seen:** the
     low-battery blink, then the battery-empty screen at the shutdown. Not reported yet: the wake by timer and by KEY
     while it sleeps, and the 3-second override. What the board draws while the clock sleeps has not been measured
-    (`sleeptest`).
+    (`sleeptest`). A second run down is in the November log (1.11 with light sleep, item 37): 142 hours to the
+    shutdown at 3.30 V (the last line 3.304 V, 04:29 on 20 November), and the clock started again from that sleep two
+    hours later with the charger on (by the timer or by KEY: the log does not say which).
 13. **Partly.** The five battery runs (stock on WiFi, stock without WiFi, a middle ground, 20 MHz on WiFi, 20 MHz
     without WiFi). Only the fourth has been logged (the settings above): 81 hours, 3.4 days, from full to the
-    shutdown.
+    shutdown. So has the sheet's seventh line, light sleep with the display's low power mode (1.11, the November
+    log): 142 hours, 5.9 days.
 14. **Seen.** Where the cell really is at 3.7 V: in the run in 12 it still had 39 % at 3.70 V, where the old curve
     said 12 %. The good-quality 3400 mAh cell lasted 3.4 days, not the five that the USB reading in 24 suggested: on
     the battery the clock drew roughly 40 mA from the cell (3400 mAh in 81 hours), where 105 mW from USB would make
-    about 28 mA. Why is not known.
+    about 28 mA. Why is not known. With light sleep and the display's low power mode (37) the same cell gave 142
+    hours, about 24 mA: more than the estimate from USB expected, so either light sleep saves more than estimated or
+    the extra on the battery goes down with it. A USB reading with light sleep on would tell which.
 
 ## Power saving
 
@@ -98,8 +105,16 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 
 ## Light sleep (1.11)
 
-37. **Not yet.** `light_sleep = on`, with the settings of 24 (`wifi_mode = sync`, `cpu_idle_mhz = 20`, `console` auto
+37. **Partly.** `light_sleep = on`, with the settings of 24 (`wifi_mode = sync`, `cpu_idle_mhz = 20`, `console` auto
     or off). Worth a run of its own in the log (the sheet's sixth line).
+    * **Seen** (1.11, the November log, with `display_power = low` at 8 Hz as well): a run down on the battery of
+      **142 hours** to the shutdown at 3.30 V (14 to 20 November), against 81 without light sleep in 12, so about
+      24 mA from the cell on average against about 40. The copy of the log starts three days in, at 3.788 V, which
+      1.10's curve calls 50 %, as it should after three days of a run from full. The chip asleep 70 % of the time at
+      the idle clock of 20 MHz. The shutdown at the end, and a start again from it on the charger. **Worse:** 30 late
+      frames in the 5.9 days (512,244 sent), the worst 1,513 ms late, against 7 in three and a half days, the worst
+      307 ms, in 16; then 12 in the 2.2 days on USB that followed (190,749 sent), the worst 1,503 ms. Whether 1.14
+      does better is to be seen. Nothing was reported against the buttons or the time of day.
     * New in 1.14, and the first things to look at: with the console off the processor stays at 80 MHz and sleeps,
       where it used to go down to the idle clock; the chip wakes once a second, for the send and the next draw
       together; and after a press it sleeps between the frames instead of staying awake for 8 seconds. None of it
@@ -120,9 +135,11 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 
 ## The display's low power mode (1.11)
 
-38. **Not yet.** `display_power = low`, with the settings of 37 (or of 24 if light sleep is off). Worth a run of its
+38. **Partly.** `display_power = low`, with the settings of 37 (or of 24 if light sleep is off). Worth a run of its
     own in the log (the sheet's seventh line). New in 1.14: the panel rests at 2 Hz, where it was 8, and the rate at
-    rest is a setting, `display_low_hz`, so the meter can compare them. None of the rates has been seen on the board.
+    rest is a setting, `display_low_hz`, so the meter can compare them. **Seen:** 1.11's 8 Hz, with light sleep, for
+    the eight days of the November log (37); what it saves on its own is not known. 1.14's rates have not been tried
+    as the clock.
     * The meter on USB (5 V, battery out), twenty seconds after the last button press, with `display_power = normal`,
       then with `low` at each `display_low_hz` in turn, 8, 4, 2 and 1 (`set display_low_hz = 4` in the serial console,
       or the settings file), nothing else changed (each is a restart): the differences are what each saves. The guess
@@ -159,7 +176,7 @@ the analogue clock's outline (1.9) and both cubes with their buttons (1.8, 1.9).
 
 39. **Not yet.** Before every deep sleep the panel goes to its slowest refresh, 0.25 Hz, whatever `display_power` says.
     `sleeptest` in the serial console shows it without a flat battery (KEY or five minutes wake it); the next run down
-    to the shutdown shows it as it is meant.
+    to the shutdown shows it as it is meant. (The run down of the November log was 1.11, before this.)
     * The *Battery empty* screen at that rate: still readable, no fading or flicker between the refreshes, no ghost
       once the clock starts again.
     * It stays up through the five-minutely looks at the battery (they should leave the panel alone), over a night.
