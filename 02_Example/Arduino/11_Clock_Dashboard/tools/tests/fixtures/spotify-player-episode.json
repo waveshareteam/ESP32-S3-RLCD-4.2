@@ -1,0 +1,16 @@
+{
+  "device": { "id": "abc123", "is_active": true, "name": "Desk PC", "type": "Computer", "volume_percent": null },
+  "repeat_state": "off",
+  "shuffle_state": false,
+  "timestamp": 1790000000000,
+  "progress_ms": 1234567,
+  "is_playing": false,
+  "item": {
+    "name": "#412 - A very long episode title about many things",
+    "duration_ms": 5400000,
+    "show": { "name": "The Example Podcast", "media_type": "audio" },
+    "type": "episode",
+    "uri": "spotify:episode:512ojhOuo1ktJprKbVcKyQ"
+  },
+  "currently_playing_type": "episode"
+}

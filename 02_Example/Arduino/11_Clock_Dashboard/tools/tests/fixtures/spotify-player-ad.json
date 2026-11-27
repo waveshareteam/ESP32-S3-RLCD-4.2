@@ -1,0 +1,9 @@
+{
+  "device": { "id": "abc123", "is_active": true, "name": "Phone", "type": "Smartphone", "volume_percent": 40 },
+  "shuffle_state": false,
+  "timestamp": 1790000000000,
+  "progress_ms": 0,
+  "is_playing": true,
+  "item": null,
+  "currently_playing_type": "ad"
+}
