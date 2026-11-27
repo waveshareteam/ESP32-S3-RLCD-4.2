@@ -1,5 +1,4 @@
 <div align="center">
-  <h1>ESP32-S3-RLCD-4.2</h1>
   <p><strong>ESP32-S3 4.2 英寸 300 × 400 反射式 LCD AIoT 开发板</strong></p>
   <p><a href="README.md">English</a> | <strong>简体中文</strong></p>
   <p>

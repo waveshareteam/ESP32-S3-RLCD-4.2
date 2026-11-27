@@ -1,5 +1,4 @@
 <div align="center">
-  <h1>ESP32-S3-RLCD-4.2</h1>
   <p><strong>ESP32-S3 4.2-inch 300 x 400 reflective LCD AIoT development board</strong></p>
   <p><strong>English</strong> | <a href="README_ZH.md">简体中文</a></p>
   <p>
