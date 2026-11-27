@@ -14,6 +14,7 @@
     <a href="examples/arduino/examples/">🔧 Arduino</a> &middot;
     <a href="https://docs.waveshare.com/ESP32-S3-RLCD-4.2">📖 Documentation</a>
   </p>
+  <p><a href="https://www.waveshare.com/esp32-s3-rlcd-4.2.htm"><strong>ESP32-S3-RLCD-4.2</strong></a></p>
   <p><img src="docs/images/esp32-s3-rlcd-4.2.webp" alt="ESP32-S3-RLCD-4.2 development board" width="500"></p>
   <p><a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2B.htm"><strong>ESP32-S3-RLCD-4.2B</strong></a></p>
   <p><a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2B.htm"><img src="docs/images/esp32-s3-rlcd-4.2b.png" alt="ESP32-S3-RLCD-4.2B development board" width="500"></a></p>
