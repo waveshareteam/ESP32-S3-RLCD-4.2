@@ -15,6 +15,8 @@
     <a href="https://docs.waveshare.com/ESP32-S3-RLCD-4.2">📖 Documentation</a>
   </p>
   <p><img src="docs/images/esp32-s3-rlcd-4.2.webp" alt="ESP32-S3-RLCD-4.2 development board" width="500"></p>
+  <p><a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2B.htm"><strong>ESP32-S3-RLCD-4.2B</strong></a></p>
+  <p><a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2B.htm"><img src="docs/images/esp32-s3-rlcd-4.2b.png" alt="ESP32-S3-RLCD-4.2B development board" width="500"></a></p>
 </div>
 
 ---
@@ -94,6 +96,8 @@ ESPHome configurations are in [`examples/esphome`](examples/esphome/README.md). 
 
 - [Product page](https://www.waveshare.com/esp32-s3-rlcd-4.2.htm)
 - [Wiki](https://docs.waveshare.com/ESP32-S3-RLCD-4.2) (schematic, pinout and tutorials)
+- [ESP32-S3-RLCD-4.2 mechanical files](hardware/mechanical/ESP32-S3-RLCD-4.2/) (V1 and V2)
+- [ESP32-S3-RLCD-4.2B mechanical files](hardware/mechanical/ESP32-S3-RLCD-4.2B/) (PDF, DXF and STEP)
 
 ## 🤝 Support
 
