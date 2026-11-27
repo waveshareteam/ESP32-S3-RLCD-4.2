@@ -1,5 +1,4 @@
 <div align="center">
-  <h1>ESP32-S3-RLCD-4.2</h1>
   <p><strong>ESP32-S3 4.2 英寸 300 × 400 反射式 LCD AIoT 开发板</strong></p>
   <p><a href="README.md">English</a> | <strong>简体中文</strong></p>
   <p>
@@ -14,7 +13,10 @@
     <a href="examples/arduino/examples/">🔧 Arduino</a> &middot;
     <a href="https://docs.waveshare.net/ESP32-S3-RLCD-4.2/">📖 文档</a>
   </p>
+  <p><a href="https://www.waveshare.com/esp32-s3-rlcd-4.2.htm"><strong>ESP32-S3-RLCD-4.2</strong></a></p>
   <p><img src="docs/images/esp32-s3-rlcd-4.2.webp" alt="ESP32-S3-RLCD-4.2 开发板" width="500"></p>
+  <p><a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2B.htm"><strong>ESP32-S3-RLCD-4.2B</strong></a></p>
+  <p><a href="https://www.waveshare.net/shop/ESP32-S3-RLCD-4.2B.htm"><img src="docs/images/esp32-s3-rlcd-4.2b.png" alt="ESP32-S3-RLCD-4.2B 开发板" width="500"></a></p>
 </div>
 
 ---
@@ -92,6 +94,8 @@ ESPHome 配置位于 [`examples/esphome`](examples/esphome/README_ZH.md)。本�
 
 - [产品页面](https://www.waveshare.com/esp32-s3-rlcd-4.2.htm)
 - [Wiki](https://docs.waveshare.net/ESP32-S3-RLCD-4.2/)（原理图、引脚图和教程）
+- [ESP32-S3-RLCD-4.2 结构与尺寸](hardware/mechanical/ESP32-S3-RLCD-4.2/)（V1 和 V2）
+- [ESP32-S3-RLCD-4.2B 结构与尺寸](hardware/mechanical/ESP32-S3-RLCD-4.2B/)（PDF、DXF 和 STEP）
 
 ## 🤝 支持
 
